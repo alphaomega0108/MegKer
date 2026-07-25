@@ -36,7 +36,7 @@ mb2_end:
 ; BSS SECTION — Uninitialized data
 ; We put our stack and page tables here
 ; ─────────────────────────────────────────────
-section .bss.boot
+section .bss.boot nobits
 align 16
 
 ; Page tables (needed for Long Mode)

@@ -4,6 +4,8 @@
  */
 
 #include <arch/arch.h>
+#include <arch/x86_64/idt.h>
+#include <arch/x86_64/pit.h>
 #include <kernel/types.h>
 
 /* Defined in their own files */
@@ -40,7 +42,7 @@ u64 arch_get_total_ram(void)
 
 void arch_interrupts_init(void)
 {
-    /* Phase 2 — IDT setup coming soon */
+    idt_init();
 }
 
 void arch_interrupts_enable(void)
@@ -66,11 +68,10 @@ void arch_cpu_relax(void)
 
 void arch_timer_init(u32 hz)
 {
-    UNUSED(hz);
-    /* Phase 2 — PIT setup coming soon */
+    pit_init(hz);
 }
 
 u64 arch_timer_ticks(void)
 {
-    return 0;
+    return pit_get_ticks();
 }
