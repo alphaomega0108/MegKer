@@ -36,7 +36,7 @@ mb2_end:
 ; BSS SECTION — Uninitialized data
 ; We put our stack and page tables here
 ; ─────────────────────────────────────────────
-section .bss
+section .bss.boot
 align 16
 
 ; Page tables (needed for Long Mode)
@@ -52,8 +52,8 @@ stack_top:
 ; ─────────────────────────────────────────────
 ; TEXT SECTION — Actual code
 ; ─────────────────────────────────────────────
-section .text
-bits 32                 ; We start in 32-bit mode
+section .text._start
+bits 32
 
 ; This is what GRUB jumps to
 global _start
@@ -217,16 +217,20 @@ long_mode_entry:
     pop  rdi            ; multiboot magic   → 1st argument
     pop  rsi            ; multiboot info    → 2nd argument
 
+    ; Save them across the BSS-zero loop below (it needs a scratch reg)
+    push rdi
+    push rsi
+
     ; Zero out BSS section
     ; (C expects uninitialized globals to be 0)
     extern _bss_start
     extern _bss_end
-    mov  rdi, _bss_start
+    mov  rax, _bss_start
 .zero_bss:
-    cmp  rdi, _bss_end
+    cmp  rax, _bss_end
     jge  .bss_done
-    mov  byte [rdi], 0
-    inc  rdi
+    mov  byte [rax], 0
+    inc  rax
     jmp  .zero_bss
 .bss_done:
 

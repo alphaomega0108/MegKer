@@ -119,13 +119,13 @@ $(BUILD)/%.o: %.asm
 iso: $(KERNEL)
 	@mkdir -p $(BUILD)/iso/boot/grub
 	@cp $(KERNEL) $(BUILD)/iso/boot/kernel.elf
-	@echo 'set timeout=0'                          > $(BUILD)/iso/boot/grub/grub.cfg
+	@echo 'set timeout=3'                          > $(BUILD)/iso/boot/grub/grub.cfg
 	@echo 'set default=0'                         >> $(BUILD)/iso/boot/grub/grub.cfg
 	@echo 'menuentry "MegKer" {'                  >> $(BUILD)/iso/boot/grub/grub.cfg
 	@echo '    multiboot2 /boot/kernel.elf'       >> $(BUILD)/iso/boot/grub/grub.cfg
 	@echo '    boot'                              >> $(BUILD)/iso/boot/grub/grub.cfg
 	@echo '}'                                     >> $(BUILD)/iso/boot/grub/grub.cfg
-	x86_64-elf-grub-mkrescue -o $(ISO) $(BUILD)/iso
+	i686-elf-grub-mkrescue -o $(ISO) $(BUILD)/iso
 	@echo "  ✓ ISO created: $(ISO)"
 
 # ── Run in QEMU ─────────────────────────────────────────
@@ -137,7 +137,8 @@ run: iso
 		-serial stdio \
 		-no-reboot \
 		-no-shutdown \
-		-cdrom $(BUILD)/megker.iso
+		-cdrom $(BUILD)/megker.iso \
+		-boot d
 
 # ── Build all architectures ─────────────────────────────
 all-archs:
