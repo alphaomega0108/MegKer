@@ -14,8 +14,9 @@ even a particular word size exists.
 ## Current status
 
 Only **x86_64** is implemented so far. It boots under GRUB2 (Multiboot2), can
-print to a VGA text console, and handles CPU exceptions and hardware
-interrupts through a working IDT/PIC/PIT setup.
+print to a VGA text console, handles CPU exceptions and hardware interrupts
+through a working IDT/PIC/PIT setup, and has a physical frame allocator fed
+by the real Multiboot2 memory map.
 
 `aarch64`, `arm32`, and MCU targets (`rp2040`, `stm32f4`) exist as empty
 scaffolding in `arch/` and in the Makefile, but have no code yet.
@@ -27,8 +28,9 @@ scaffolding in `arch/` and in the Makefile, but have no code yet.
 2. `_start` sets up a boot stack, checks for Long Mode support via CPUID,
    builds identity-mapped page tables (2MB pages, first 1GB), enables PAE,
    loads a minimal 64-bit GDT, and far-jumps into Long Mode.
-3. `long_mode_entry` reloads segment registers, zeroes the C `.bss` region,
-   and calls `kernel_main()`.
+3. `long_mode_entry` reloads segment registers, recovers the Multiboot2
+   magic/info pointer GRUB left in `eax`/`ebx`, zeroes the C `.bss` region,
+   and calls `kernel_main(magic, info)`.
 4. `kernel_main()` (`kernel/kernel.c`) — the arch-independent entry point —
    brings the system up in order: console, memory, interrupts, timer, then
    drops into an idle loop.
@@ -43,7 +45,7 @@ scaffolding in `arch/` and in the Makefile, but have no code yet.
 | PIC        | `arch/x86_64/boot/idt.c` (`pic_remap`)                     | 8259 remapped so IRQs land at vectors 32-47 |
 | Timer      | `arch/x86_64/drivers/pit.c`                                | PIT (8253/8254) driving IRQ0 at a configurable Hz |
 | Console    | `arch/x86_64/drivers/console.c`                             | VGA text mode (0xB8000), scrolling |
-| Memory     | `arch/x86_64/arch.c` (`arch_mm_init`)                       | Stub — not implemented yet |
+| Memory     | `mm/pmm.c`, `arch/x86_64/mm/multiboot2.c`                   | Bitmap physical frame allocator, fed by the Multiboot2 memory map (clipped to the identity-mapped first 1GB) |
 
 Unhandled CPU exceptions (divide-by-zero, GPF, page fault, etc.) currently
 call `kernel_panic()` with the exception name and halt, rather than
@@ -59,7 +61,8 @@ arch_name();                          // "x86_64", "aarch64", ...
 arch_early_init();  arch_late_init(); // boot-time hooks
 arch_console_init/putc/clear();       // console output
 arch_interrupts_init/enable/disable();// IDT/GIC/etc
-arch_mm_init();  arch_get_total_ram();// paging/MMU
+arch_mm_init(magic, boot_info);       // paging/MMU — boot_info is bootloader-specific
+arch_get_total_ram();
 arch_cpu_halt();  arch_cpu_relax();   // CPU control
 arch_timer_init(hz);  arch_timer_ticks();
 ```
@@ -76,10 +79,10 @@ arch/                Per-architecture code (boot, GDT/IDT, drivers, mm)
   aarch64/, arm32/    Scaffolding only
   mcu/rp2040/         )
   mcu/stm32f4/        )  Scaffolding only
-include/              Public headers (kernel/, arch/, drivers/, lib/)
+include/              Public headers (kernel/, arch/, drivers/, lib/, mm/)
 kernel/               Arch-independent kernel core (kernel_main, panic)
 drivers/              Arch-independent drivers (not yet populated)
-mm/                   Arch-independent memory management (not yet populated)
+mm/                   Arch-independent memory management — pmm.c (bitmap frame allocator)
 lib/                  Freestanding libc-ish helpers (not yet populated)
 gui/                  Future GUI work (not yet populated)
 tools/check-toolchain.sh   Checks that the expected cross-toolchains/QEMU are installed
@@ -113,7 +116,10 @@ banner.
 
 ## Known gaps / next steps
 
-- `arch_mm_init()` is a stub — no physical/virtual memory manager yet.
+- Only a physical frame allocator exists — no virtual memory manager
+  (kernel heap, `kmalloc`, per-process page tables) yet, and the PMM only
+  manages the identity-mapped first 1GB regardless of how much RAM is
+  actually detected.
 - No keyboard or other IRQ-driven drivers beyond the timer.
 - `aarch64`, `arm32`, and the MCU targets have no code — everything above is
   x86_64-only so far.
