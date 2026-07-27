@@ -26,7 +26,20 @@ mb2_start:
     dd MULTIBOOT2_LENGTH
     dd MULTIBOOT2_CHECKSUM
 
+    ; Framebuffer request tag — ask for a linear graphics framebuffer.
+    ; width/height/depth = 0 means "no preference"; GRUB picks
+    ; something sensible and reports back what it actually chose in
+    ; the info tag (parsed in arch/x86_64/mm/multiboot2.c).
+    align 8
+    dw 5    ; type = framebuffer
+    dw 0    ; flags
+    dd 20   ; size
+    dd 0    ; width
+    dd 0    ; height
+    dd 0    ; depth
+
     ; End tag — required by multiboot2 spec
+    align 8
     dw 0    ; type = 0 (end)
     dw 0    ; flags
     dd 8    ; size

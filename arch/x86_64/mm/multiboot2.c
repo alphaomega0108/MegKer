@@ -7,13 +7,16 @@
 
 #include <kernel/types.h>
 #include <arch/x86_64/mm.h>
+#include <arch/x86_64/framebuffer.h>
 #include <mm/pmm.h>
 
 #define MULTIBOOT2_BOOTLOADER_MAGIC 0x36d76289u
 
-#define MB2_TAG_END   0
-#define MB2_TAG_MMAP  6
+#define MB2_TAG_END           0
+#define MB2_TAG_MMAP          6
+#define MB2_TAG_FRAMEBUFFER   8
 #define MB2_MEM_AVAILABLE 1
+#define MB2_FB_TYPE_RGB   1
 
 /* Our boot.asm sets up 2MB identity-mapped pages for the first 1GB
  * only (see setup_page_tables) — anything past that isn't mapped yet,
@@ -37,10 +40,22 @@ typedef struct {
     u32 reserved;
 } mb2_mmap_entry_t;
 
+typedef struct {
+    u32 type, size;
+    u64 addr;
+    u32 pitch;
+    u32 width;
+    u32 height;
+    u8  bpp;
+    u8  fb_type;
+    u16 reserved;
+} __attribute__((packed)) mb2_tag_framebuffer_t;
+
 extern u8 _kernel_start[];
 extern u8 _kernel_end[];
 
 static u64 total_ram_bytes = 0;
+static fb_info_t framebuffer_info = { 0 };
 
 void x86_64_mm_init(u64 boot_magic, void* boot_info)
 {
@@ -85,6 +100,18 @@ void x86_64_mm_init(u64 boot_magic, void* boot_info)
                 }
             }
 
+            if (t->type == MB2_TAG_FRAMEBUFFER) {
+                mb2_tag_framebuffer_t* fbt = (mb2_tag_framebuffer_t*)tag;
+                if (fbt->fb_type == MB2_FB_TYPE_RGB && fbt->bpp == 32) {
+                    framebuffer_info.present = true;
+                    framebuffer_info.addr    = fbt->addr;
+                    framebuffer_info.pitch   = fbt->pitch;
+                    framebuffer_info.width   = fbt->width;
+                    framebuffer_info.height  = fbt->height;
+                    framebuffer_info.bpp     = fbt->bpp;
+                }
+            }
+
             tag += ALIGN_UP(t->size, 8);
         }
     }
@@ -95,4 +122,9 @@ void x86_64_mm_init(u64 boot_magic, void* boot_info)
 u64 x86_64_total_ram(void)
 {
     return total_ram_bytes;
+}
+
+const fb_info_t* x86_64_get_framebuffer_info(void)
+{
+    return &framebuffer_info;
 }
