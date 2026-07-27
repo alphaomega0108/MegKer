@@ -10,6 +10,9 @@
 #include <arch/x86_64/mm.h>
 #include <arch/x86_64/mouse.h>
 #include <arch/x86_64/pit.h>
+#include <arch/x86_64/vmm.h>
+#include <mm/pmm.h>
+#include <kernel/kernel.h>
 #include <kernel/types.h>
 
 /* Defined in their own files */
@@ -28,13 +31,53 @@ void arch_early_init(void)
     gdt_init();
 }
 
+/* Proves address-space isolation actually works: map a fresh frame
+ * at a virtual address the kernel space has never touched, only
+ * inside a brand-new address space, then confirm it reads back
+ * correctly there and is genuinely invisible (unmapped) from the
+ * kernel's own space. */
+static bool vmm_selftest(void)
+{
+    const virtaddr test_va = 0x50000000ULL;   /* 1.25GB — past the boot identity map, untouched */
+
+    if (vmm_translate(vmm_kernel_space(), test_va) != 0)
+        return false;   /* not a clean test address */
+
+    address_space_t* as = vmm_create_address_space();
+    physaddr frame = pmm_alloc_frame();
+    if (!frame)
+        return false;
+
+    vmm_map(as, test_va, frame, VMM_PRESENT | VMM_WRITABLE);
+
+    vmm_switch(as);
+    *(volatile u32*)test_va = 0xDEADBEEF;
+    bool readback_ok = (*(volatile u32*)test_va == 0xDEADBEEF);
+    vmm_switch(vmm_kernel_space());
+
+    bool isolated_ok = (vmm_translate(vmm_kernel_space(), test_va) == 0);
+    bool mapped_ok    = (vmm_translate(as, test_va) == (frame | 0));
+
+    vmm_destroy_address_space(as);
+    pmm_free_frame(frame);
+
+    return readback_ok && isolated_ok && mapped_ok;
+}
+
 void arch_late_init(void)
 {
     keyboard_init();
 
     fb_init();
-    if (fb_available())
+    if (fb_available()) {
         mouse_init();
+
+        bool ok = vmm_selftest();
+        fb_draw_string(10, 10, ok ? "VMM: OK" : "VMM: FAIL",
+                        ok ? 0x0000FF00 : 0x00FF0000, 0x00102030);
+        if (!ok)
+            kernel_panic("VMM self-test failed");
+    }
 
     /* ACPI, SMP later */
 }
@@ -42,6 +85,7 @@ void arch_late_init(void)
 void arch_mm_init(u64 boot_magic, void* boot_info)
 {
     x86_64_mm_init(boot_magic, boot_info);
+    vmm_init();
 }
 
 u64 arch_get_total_ram(void)
