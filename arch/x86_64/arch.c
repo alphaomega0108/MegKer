@@ -5,6 +5,7 @@
 
 #include <arch/arch.h>
 #include <arch/x86_64/idt.h>
+#include <arch/x86_64/mm.h>
 #include <arch/x86_64/pit.h>
 #include <kernel/types.h>
 
@@ -29,15 +30,14 @@ void arch_late_init(void)
     /* Nothing yet — will add ACPI, SMP later */
 }
 
-void arch_mm_init(void)
+void arch_mm_init(u64 boot_magic, void* boot_info)
 {
-    /* Phase 2 — coming soon */
+    x86_64_mm_init(boot_magic, boot_info);
 }
 
 u64 arch_get_total_ram(void)
 {
-    /* Phase 2 — read from multiboot info */
-    return 0;
+    return x86_64_total_ram();
 }
 
 void arch_interrupts_init(void)

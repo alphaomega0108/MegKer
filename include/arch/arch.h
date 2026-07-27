@@ -26,8 +26,11 @@ void arch_interrupts_init(void);    /* set up IDT/GIC/etc              */
 void arch_interrupts_enable(void);  /* enable interrupts globally      */
 void arch_interrupts_disable(void); /* disable interrupts globally     */
 
-/* --- Memory --- */
-void arch_mm_init(void);            /* set up paging/MMU               */
+/* --- Memory ---
+ * boot_magic/boot_info are whatever the bootloader handed kernel_main —
+ * opaque outside arch code (on x86_64 that's the Multiboot2 magic and
+ * info pointer; another arch might get a device tree blob instead). */
+void arch_mm_init(u64 boot_magic, void* boot_info);
 u64  arch_get_total_ram(void);      /* how much RAM do we have?        */
 
 /* --- CPU control --- */

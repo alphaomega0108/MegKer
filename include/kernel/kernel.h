@@ -25,7 +25,7 @@ typedef enum {
 extern kernel_state_t kernel_state;
 
 /* --- Core kernel functions --- */
-void kernel_main(void);         /* main entry, called by arch boot */
+void kernel_main(u64 boot_magic, void* boot_info); /* main entry, called by arch boot */
 void kernel_panic(const char* msg);  /* unrecoverable error */
 
 #endif /* KERNEL_H */

@@ -11,24 +11,43 @@
 /* Global kernel state — readable from anywhere */
 kernel_state_t kernel_state = KERNEL_STATE_BOOT;
 
-void kernel_main(void)
+static void console_puts(const char* s)
+{
+    while (*s)
+        arch_console_putc(*s++);
+}
+
+static void console_put_dec(u64 value)
+{
+    char buf[21];   /* max u64 is 20 digits + NUL */
+    int i = 20;
+
+    buf[i] = '\0';
+    if (value == 0) {
+        arch_console_putc('0');
+        return;
+    }
+    while (value > 0) {
+        buf[--i] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+    console_puts(&buf[i]);
+}
+
+void kernel_main(u64 boot_magic, void* boot_info)
 {
     /* 1. Very first arch init — sets up console so we can print */
     arch_early_init();
     arch_console_init();
 
     /* 2. Print the banner */
-    arch_console_putc('\n');
-    arch_console_putc('M');
-    arch_console_putc('e');
-    arch_console_putc('g');
-    arch_console_putc('K');
-    arch_console_putc('e');
-    arch_console_putc('r');
-    arch_console_putc('\n');
+    console_puts("\nMegKer\n");
 
     /* 3. Init memory */
-    arch_mm_init();
+    arch_mm_init(boot_magic, boot_info);
+    console_puts("RAM: ");
+    console_put_dec(arch_get_total_ram() / (1024 * 1024));
+    console_puts(" MB\n");
 
     /* 4. Init interrupts */
     arch_interrupts_init();
@@ -55,21 +74,8 @@ void kernel_panic(const char* msg)
     arch_interrupts_disable();
     kernel_state = KERNEL_STATE_PANIC;
 
-    /* Print PANIC message character by character */
-    arch_console_putc('P');
-    arch_console_putc('A');
-    arch_console_putc('N');
-    arch_console_putc('I');
-    arch_console_putc('C');
-    arch_console_putc(':');
-    arch_console_putc(' ');
-
-    /* Print the message */
-    const char* p = msg;
-    while (*p) {
-        arch_console_putc(*p);
-        p++;
-    }
+    console_puts("PANIC: ");
+    console_puts(msg);
 
     /* Halt forever */
     arch_cpu_halt();

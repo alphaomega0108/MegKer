@@ -213,9 +213,16 @@ long_mode_entry:
     mov fs, ax
     mov gs, ax
 
-    ; Restore multiboot info (we pushed it earlier)
-    pop  rdi            ; multiboot magic   → 1st argument
-    pop  rsi            ; multiboot info    → 2nd argument
+    ; Restore multiboot info (we pushed it earlier).
+    ; NOTE: those were 32-bit pushes back in protected mode (4 bytes
+    ; each), but `pop` in long mode is always a 64-bit operation — a
+    ; plain `pop rdi` here would swallow both values into one
+    ; register. Read them as explicit 32-bit loads instead (which
+    ; zero-extend into the full 64-bit register) and clean up the
+    ; stack manually.
+    mov  edi, [rsp]      ; multiboot magic   → 1st argument
+    mov  esi, [rsp + 4]  ; multiboot info    → 2nd argument
+    add  rsp, 8
 
     ; Save them across the BSS-zero loop below (it needs a scratch reg)
     push rdi
