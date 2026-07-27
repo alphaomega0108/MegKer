@@ -21,6 +21,11 @@ void arch_console_init(void);       /* set up the console              */
 void arch_console_putc(char c);     /* print one character             */
 void arch_console_clear(void);      /* clear the screen                */
 
+/* --- Keyboard input ---
+ * Non-blocking: returns 0 if nothing is waiting. Archs without a
+ * keyboard (yet) can just always return 0. */
+char arch_keyboard_getchar(void);
+
 /* --- Interrupts --- */
 void arch_interrupts_init(void);    /* set up IDT/GIC/etc              */
 void arch_interrupts_enable(void);  /* enable interrupts globally      */

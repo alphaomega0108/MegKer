@@ -5,6 +5,7 @@
 
 #include <arch/arch.h>
 #include <arch/x86_64/idt.h>
+#include <arch/x86_64/keyboard.h>
 #include <arch/x86_64/mm.h>
 #include <arch/x86_64/pit.h>
 #include <kernel/types.h>
@@ -27,7 +28,8 @@ void arch_early_init(void)
 
 void arch_late_init(void)
 {
-    /* Nothing yet — will add ACPI, SMP later */
+    keyboard_init();
+    /* ACPI, SMP later */
 }
 
 void arch_mm_init(u64 boot_magic, void* boot_info)
@@ -64,6 +66,11 @@ void arch_cpu_halt(void)
 void arch_cpu_relax(void)
 {
     __asm__ volatile ("pause");
+}
+
+char arch_keyboard_getchar(void)
+{
+    return keyboard_getchar();
 }
 
 void arch_timer_init(u32 hz)

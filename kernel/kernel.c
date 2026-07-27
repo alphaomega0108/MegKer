@@ -69,9 +69,13 @@ void kernel_main(u64 boot_magic, void* boot_info)
     /* 7. Kernel is fully up */
     kernel_state = KERNEL_STATE_RUNNING;
 
-    /* 8. Main idle loop — never returns */
+    /* 8. Main idle loop — echoes typed characters, never returns */
     while (1) {
-        arch_cpu_relax();
+        char c = arch_keyboard_getchar();
+        if (c)
+            arch_console_putc(c);
+        else
+            arch_cpu_relax();
     }
 }
 
