@@ -78,7 +78,7 @@ ARCH_C_SRCS := $(shell find arch/$(ARCH)/ -name "*.c" 2>/dev/null)
 ARCH_ASM_SRCS := $(shell find arch/$(ARCH)/ -name "*.asm" 2>/dev/null)
 
 # Common kernel .c files
-KERN_SRCS := $(shell find kernel/ mm/ lib/ -name "*.c" 2>/dev/null)
+KERN_SRCS := $(shell find kernel/ mm/ lib/ gui/ -name "*.c" 2>/dev/null)
 
 # All object files
 ARCH_C_OBJS   := $(patsubst %.c,   $(BUILD)/%.o, $(ARCH_C_SRCS))

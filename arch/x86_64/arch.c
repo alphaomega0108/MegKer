@@ -8,6 +8,7 @@
 #include <arch/x86_64/idt.h>
 #include <arch/x86_64/keyboard.h>
 #include <arch/x86_64/mm.h>
+#include <arch/x86_64/mouse.h>
 #include <arch/x86_64/pit.h>
 #include <kernel/types.h>
 
@@ -32,12 +33,8 @@ void arch_late_init(void)
     keyboard_init();
 
     fb_init();
-    if (fb_available()) {
-        fb_clear(0x001A2233);
-        fb_fill_rect(20, 20, 200, 100, 0x00CC3333);
-        fb_draw_line(20, 140, 220, 140, 0x0033CC33);
-        fb_draw_string(20, 160, "MEGKER GRAPHICS OK", 0x00FFFFFF, 0x001A2233);
-    }
+    if (fb_available())
+        mouse_init();
 
     /* ACPI, SMP later */
 }
@@ -82,6 +79,20 @@ char arch_keyboard_getchar(void)
 {
     return keyboard_getchar();
 }
+
+bool arch_mouse_get_state(i32* x, i32* y, u8* buttons)
+{
+    return mouse_get_state(x, y, buttons);
+}
+
+bool arch_gfx_available(void) { return fb_available(); }
+u32  arch_gfx_width(void)     { return fb_width(); }
+u32  arch_gfx_height(void)    { return fb_height(); }
+
+void arch_gfx_put_pixel(u32 x, u32 y, u32 rgb)              { fb_put_pixel(x, y, rgb); }
+void arch_gfx_fill_rect(u32 x, u32 y, u32 w, u32 h, u32 rgb) { fb_fill_rect(x, y, w, h, rgb); }
+void arch_gfx_draw_line(i32 x0, i32 y0, i32 x1, i32 y1, u32 rgb) { fb_draw_line(x0, y0, x1, y1, rgb); }
+void arch_gfx_draw_string(u32 x, u32 y, const char* s, u32 fg, u32 bg) { fb_draw_string(x, y, s, fg, bg); }
 
 void arch_timer_init(u32 hz)
 {

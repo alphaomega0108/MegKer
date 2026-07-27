@@ -107,6 +107,12 @@ void irq_install_handler(int irq, irq_handler_t handler)
 {
     irq_handlers[irq] = handler;
     irq_set_mask(irq, false);
+
+    /* IRQ2 is the slave PIC's cascade line into the master — any
+     * slave-side IRQ (8-15) is unreachable unless it's also unmasked,
+     * regardless of the slave's own per-line mask. */
+    if (irq >= 8)
+        irq_set_mask(2, false);
 }
 
 void idt_init(void)

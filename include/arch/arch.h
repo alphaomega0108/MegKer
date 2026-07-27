@@ -26,6 +26,25 @@ void arch_console_clear(void);      /* clear the screen                */
  * keyboard (yet) can just always return 0. */
 char arch_keyboard_getchar(void);
 
+/* --- Mouse input ---
+ * Non-blocking. Returns false (and leaves outputs untouched) if
+ * there's nothing new — archs without a pointing device can always
+ * return false. buttons: bit0=left, bit1=right, bit2=middle. */
+bool arch_mouse_get_state(i32* x, i32* y, u8* buttons);
+
+/* --- Graphics ---
+ * A linear RGB framebuffer, if the arch/platform has one. Archs
+ * without graphics yet can leave arch_gfx_available() returning
+ * false — everything else becomes a no-op in that case. Colors are
+ * 0x00RRGGBB. */
+bool arch_gfx_available(void);
+u32  arch_gfx_width(void);
+u32  arch_gfx_height(void);
+void arch_gfx_put_pixel(u32 x, u32 y, u32 rgb);
+void arch_gfx_fill_rect(u32 x, u32 y, u32 w, u32 h, u32 rgb);
+void arch_gfx_draw_line(i32 x0, i32 y0, i32 x1, i32 y1, u32 rgb);
+void arch_gfx_draw_string(u32 x, u32 y, const char* s, u32 fg, u32 bg);
+
 /* --- Interrupts --- */
 void arch_interrupts_init(void);    /* set up IDT/GIC/etc              */
 void arch_interrupts_enable(void);  /* enable interrupts globally      */

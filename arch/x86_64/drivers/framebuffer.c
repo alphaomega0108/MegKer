@@ -38,9 +38,25 @@ void fb_put_pixel(u32 x, u32 y, u32 rgb)
 
 void fb_fill_rect(u32 x, u32 y, u32 w, u32 h, u32 rgb)
 {
-    for (u32 row = y; row < y + h; row++)
-        for (u32 col = x; col < x + w; col++)
-            fb_put_pixel(col, row, rgb);
+    if (!fb || !fb->present)
+        return;
+
+    /* Clip once, then write rows directly — per-pixel fb_put_pixel
+     * calls (bounds check + multiply + function call each) make a
+     * full-screen clear slow enough under emulation to visibly tear
+     * across an async screendump. */
+    u32 x1 = x + w, y1 = y + h;
+    if (x1 > fb->width)  x1 = fb->width;
+    if (y1 > fb->height) y1 = fb->height;
+    if (x >= x1 || y >= y1)
+        return;
+
+    u32 color = rgb & 0x00FFFFFFu;
+    for (u32 row = y; row < y1; row++) {
+        u32* p = (u32*)((u8*)(usize)fb->addr + (usize)row * fb->pitch + (usize)x * 4);
+        for (u32 col = x; col < x1; col++)
+            *p++ = color;
+    }
 }
 
 void fb_clear(u32 rgb)

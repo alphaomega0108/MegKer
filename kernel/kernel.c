@@ -8,6 +8,7 @@
 #include <kernel/types.h>
 #include <arch/arch.h>
 #include <mm/heap.h>
+#include <gui/gui.h>
 
 /* Global kernel state — readable from anywhere */
 kernel_state_t kernel_state = KERNEL_STATE_BOOT;
@@ -65,17 +66,21 @@ void kernel_main(u64 boot_magic, void* boot_info)
 
     /* 6. Late arch init */
     arch_late_init();
+    gui_init();
 
     /* 7. Kernel is fully up */
     kernel_state = KERNEL_STATE_RUNNING;
 
-    /* 8. Main idle loop — echoes typed characters, never returns */
+    /* 8. Main idle loop — GUI when available, echo otherwise */
     while (1) {
-        char c = arch_keyboard_getchar();
-        if (c)
-            arch_console_putc(c);
-        else
-            arch_cpu_relax();
+        if (arch_gfx_available()) {
+            gui_update();
+        } else {
+            char c = arch_keyboard_getchar();
+            if (c)
+                arch_console_putc(c);
+        }
+        arch_cpu_relax();
     }
 }
 
