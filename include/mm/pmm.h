@@ -26,6 +26,12 @@ void pmm_init(const mem_region_t* regions, u32 region_count,
 physaddr pmm_alloc_frame(void);
 void     pmm_free_frame(physaddr addr);
 
+/* Like pmm_alloc_frame(), but returns `count` physically contiguous
+ * frames (needed by callers — like the kernel heap — that do pointer
+ * arithmetic across the whole span, not just frame-at-a-time bookkeeping). */
+physaddr pmm_alloc_frames(u64 count);
+void     pmm_free_frames(physaddr addr, u64 count);
+
 u64 pmm_total_frames(void);
 u64 pmm_free_frame_count(void);
 

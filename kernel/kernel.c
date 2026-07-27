@@ -7,6 +7,7 @@
 #include <kernel/kernel.h>
 #include <kernel/types.h>
 #include <arch/arch.h>
+#include <mm/heap.h>
 
 /* Global kernel state — readable from anywhere */
 kernel_state_t kernel_state = KERNEL_STATE_BOOT;
@@ -48,6 +49,12 @@ void kernel_main(u64 boot_magic, void* boot_info)
     console_puts("RAM: ");
     console_put_dec(arch_get_total_ram() / (1024 * 1024));
     console_puts(" MB\n");
+
+    heap_init();
+    void* heap_check = kmalloc(64);
+    console_puts("Heap: ");
+    console_puts(heap_check ? "OK\n" : "FAIL\n");
+    kfree(heap_check);
 
     /* 4. Init interrupts */
     arch_interrupts_init();

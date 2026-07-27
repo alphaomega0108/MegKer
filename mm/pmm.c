@@ -91,5 +91,40 @@ void pmm_free_frame(physaddr addr)
     free_frames++;
 }
 
+physaddr pmm_alloc_frames(u64 count)
+{
+    if (count == 0)
+        return 0;
+
+    u64 run_start = 0;
+    u64 run_len   = 0;
+
+    for (u64 f = 0; f < total_frames; f++) {
+        if (bit_test(f)) {
+            run_len = 0;
+            continue;
+        }
+        if (run_len == 0)
+            run_start = f;
+        run_len++;
+
+        if (run_len == count) {
+            for (u64 i = run_start; i < run_start + count; i++)
+                bit_set(i);
+            free_frames -= count;
+            return run_start * PMM_FRAME_SIZE;
+        }
+    }
+    return 0;   /* no run big enough */
+}
+
+void pmm_free_frames(physaddr addr, u64 count)
+{
+    u64 first = addr / PMM_FRAME_SIZE;
+    for (u64 f = first; f < first + count && f < total_frames; f++) {
+        if (bit_test(f)) { bit_clear(f); free_frames++; }
+    }
+}
+
 u64 pmm_total_frames(void)     { return total_frames; }
 u64 pmm_free_frame_count(void) { return free_frames; }
