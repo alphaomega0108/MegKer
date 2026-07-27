@@ -7,6 +7,7 @@
 #include <arch/x86_64/pit.h>
 #include <arch/x86_64/idt.h>
 #include <arch/x86_64/io.h>
+#include <kernel/sched.h>
 
 #define PIT_FREQUENCY 1193182u
 #define PIT_CHANNEL0  0x40
@@ -18,6 +19,7 @@ static void pit_tick(registers_t* regs)
 {
     UNUSED(regs);
     ticks++;
+    sched_tick();
 }
 
 void pit_init(u32 hz)

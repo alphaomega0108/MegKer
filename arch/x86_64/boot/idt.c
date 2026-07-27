@@ -155,10 +155,16 @@ void isr_handler(registers_t* regs)
 
     int irq = (int)(regs->int_no - IRQ_BASE);
 
-    if (irq_handlers[irq])
-        irq_handlers[irq](regs);
-
+    /* EOI before dispatching, not after: a handler (the timer's, in
+     * particular) may trigger a context switch via arch_context_switch()
+     * that suspends this exact call chain — possibly for a long time,
+     * possibly forever if nothing switches back promptly. EOI must not
+     * wait on that, or the PIC believes this IRQ is still in-service
+     * and withholds the next one, stalling the timer. */
     if (irq >= 8)
         outb(0xA0, 0x20);   /* EOI to slave PIC */
     outb(0x20, 0x20);       /* EOI to master PIC */
+
+    if (irq_handlers[irq])
+        irq_handlers[irq](regs);
 }

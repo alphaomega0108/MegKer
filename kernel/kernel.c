@@ -9,6 +9,7 @@
 #include <arch/arch.h>
 #include <mm/heap.h>
 #include <gui/gui.h>
+#include <kernel/sched.h>
 
 /* Global kernel state — readable from anywhere */
 kernel_state_t kernel_state = KERNEL_STATE_BOOT;
@@ -34,6 +35,28 @@ static void console_put_dec(u64 value)
         value /= 10;
     }
     console_puts(&buf[i]);
+}
+
+/* Proves preemptive scheduling actually works: toggles a small
+ * indicator square roughly once a second while the GUI thread (see
+ * below) keeps running independently. */
+static void blinker_thread(void* arg)
+{
+    UNUSED(arg);
+    bool on = false;
+    u64 last_tick = 0;
+
+    while (1) {
+        u64 now = arch_timer_ticks();
+        if (now - last_tick >= 100) {   /* ~1s at the 100Hz timer */
+            last_tick = now;
+            on = !on;
+            if (arch_gfx_available())
+                arch_gfx_fill_rect(arch_gfx_width() - 20, 10, 10, 10,
+                                    on ? 0x0000FF00 : 0x00FF0000);
+        }
+        arch_cpu_relax();
+    }
 }
 
 void kernel_main(u64 boot_magic, void* boot_info)
@@ -67,6 +90,10 @@ void kernel_main(u64 boot_magic, void* boot_info)
     /* 6. Late arch init */
     arch_late_init();
     gui_init();
+
+    /* 6b. Scheduler — this call stack becomes thread 0 */
+    sched_init();
+    thread_create(blinker_thread, NULL);
 
     /* 7. Kernel is fully up */
     kernel_state = KERNEL_STATE_RUNNING;

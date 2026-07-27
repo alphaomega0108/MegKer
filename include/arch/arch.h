@@ -65,4 +65,12 @@ void arch_cpu_relax(void);          /* pause hint inside loops         */
 void arch_timer_init(u32 hz);       /* set up timer at given frequency */
 u64  arch_timer_ticks(void);        /* ticks since boot                */
 
+/* --- Kernel threading ---
+ * Context-switch mechanics only — kernel/sched.c owns the actual
+ * scheduling policy (ready queue, round robin). arch_thread_init_stack()
+ * builds a brand-new thread's initial stack so arch_context_switch()
+ * can resume it exactly like any other suspended thread. */
+void* arch_thread_init_stack(void* stack_top, void (*entry)(void*), void* arg);
+void  arch_context_switch(void** old_sp, void* new_sp);
+
 #endif /* ARCH_H */
