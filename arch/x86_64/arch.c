@@ -10,13 +10,20 @@
 #include <arch/x86_64/mm.h>
 #include <arch/x86_64/mouse.h>
 #include <arch/x86_64/pit.h>
+#include <arch/x86_64/process.h>
 #include <arch/x86_64/vmm.h>
 #include <mm/pmm.h>
 #include <kernel/kernel.h>
 #include <kernel/types.h>
 
+/* Embedded by the Makefile (ld -r -b binary) from the built
+ * userland/hello.elf — a real static ELF64 test executable. */
+extern const u8 _binary_hello_elf_start[];
+extern const u8 _binary_hello_elf_end[];
+
 /* Defined in their own files */
 extern void gdt_init(void);
+extern void tss_init(void);
 extern void arch_console_init(void);
 extern void arch_console_putc(char c);
 extern void arch_console_clear(void);
@@ -29,6 +36,7 @@ const char* arch_name(void)
 void arch_early_init(void)
 {
     gdt_init();
+    tss_init();
 }
 
 /* Proves address-space isolation actually works: map a fresh frame
@@ -77,6 +85,22 @@ void arch_late_init(void)
                         ok ? 0x0000FF00 : 0x00FF0000, 0x00102030);
         if (!ok)
             kernel_panic("VMM self-test failed");
+
+        usize hello_size = (usize)(_binary_hello_elf_end - _binary_hello_elf_start);
+        i32 exit_code = process_run(_binary_hello_elf_start, hello_size);
+        char buf[32];
+        int n = 0;
+        const char* label = exit_code < 0 ? "USERLAND: LOAD FAILED" : "USERLAND: EXIT ";
+        while (*label) buf[n++] = *label++;
+        if (exit_code >= 0) {
+            u32 v = (u32)exit_code;
+            char tmp[10]; int t = 0;
+            if (v == 0) tmp[t++] = '0';
+            while (v > 0) { tmp[t++] = (char)('0' + v % 10); v /= 10; }
+            while (t > 0) buf[n++] = tmp[--t];
+        }
+        buf[n] = '\0';
+        fb_draw_string(10, 20, buf, exit_code == 0 ? 0x0000FF00 : 0x00FF0000, 0x00102030);
     }
 
     /* ACPI, SMP later */

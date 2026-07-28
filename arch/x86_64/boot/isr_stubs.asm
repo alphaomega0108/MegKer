@@ -84,6 +84,12 @@ IRQ_STUB 13, 45
 IRQ_STUB 14, 46
 IRQ_STUB 15, 47
 
+; Syscall entry — vector 0x80 (128), triggered by ring 3 via `int 0x80`.
+; Its IDT gate is set up with DPL=3 (see idt.c) so user mode is
+; actually allowed to invoke it; otherwise identical in shape to any
+; other ISR_NOERR stub.
+ISR_NOERR 128
+
 extern isr_handler
 
 isr_common_stub:

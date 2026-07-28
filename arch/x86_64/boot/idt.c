@@ -44,6 +44,9 @@ extern void irq4(void),  irq5(void),  irq6(void),  irq7(void);
 extern void irq8(void),  irq9(void),  irq10(void), irq11(void);
 extern void irq12(void), irq13(void), irq14(void), irq15(void);
 
+extern void isr128(void);          /* syscall entry, see isr_stubs.asm */
+extern void syscall_dispatch(registers_t* regs);
+
 static const char* exception_names[32] = {
     "Divide-by-zero", "Debug", "NMI", "Breakpoint",
     "Overflow", "Bound Range Exceeded", "Invalid Opcode", "Device Not Available",
@@ -70,6 +73,11 @@ static void idt_set_gate(int vec, void (*handler)(void), u8 type_attr)
 
 /* 0x8E = present, ring 0, 64-bit interrupt gate */
 #define GATE_INTERRUPT 0x8E
+/* 0xEE = same, but DPL=3 — ring 3 is otherwise not allowed to `int`
+ * into a gate at all (#GP). Only the syscall vector gets this. */
+#define GATE_INTERRUPT_USER 0xEE
+
+#define SYSCALL_VECTOR 0x80
 
 static void pic_remap(void)
 {
@@ -140,14 +148,21 @@ void idt_init(void)
     for (int i = 0; i < 16; i++)
         idt_set_gate(IRQ_BASE + i, irq_stubs[i], GATE_INTERRUPT);
 
+    idt_set_gate(SYSCALL_VECTOR, isr128, GATE_INTERRUPT_USER);
+
     idt_ptr.limit = sizeof(idt) - 1;
     idt_ptr.base  = (u64)&idt;
     __asm__ volatile ("lidt %0" :: "m"(idt_ptr));
 }
 
-/* Called from isr_common_stub for every vector 0-47. */
+/* Called from isr_common_stub for every vector 0-47, plus 0x80. */
 void isr_handler(registers_t* regs)
 {
+    if (regs->int_no == SYSCALL_VECTOR) {
+        syscall_dispatch(regs);
+        return;
+    }
+
     if (regs->int_no < 32) {
         kernel_panic(exception_names[regs->int_no]);
         return; /* unreachable — kernel_panic halts */

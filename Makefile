@@ -85,7 +85,17 @@ ARCH_C_OBJS   := $(patsubst %.c,   $(BUILD)/%.o, $(ARCH_C_SRCS))
 ARCH_ASM_OBJS := $(patsubst %.asm, $(BUILD)/%.o, $(ARCH_ASM_SRCS))
 KERN_OBJS     := $(patsubst %.c,   $(BUILD)/%.o, $(KERN_SRCS))
 
-ALL_OBJS := $(ARCH_ASM_OBJS) $(ARCH_C_OBJS) $(KERN_OBJS)
+# Userland test program (x86_64 only) — a real static ELF64 binary,
+# embedded as raw data so the kernel's ELF loader has something
+# genuine to load rather than a hardcoded stub.
+ifeq ($(ARCH), x86_64)
+    USERLAND_ELF   := $(BUILD)/userland/hello.elf
+    USERLAND_EMBED := $(BUILD)/userland/hello_embed.o
+else
+    USERLAND_EMBED :=
+endif
+
+ALL_OBJS := $(ARCH_ASM_OBJS) $(ARCH_C_OBJS) $(KERN_OBJS) $(USERLAND_EMBED)
 
 # ── Targets ─────────────────────────────────────────────
 .PHONY: all run iso clean all-archs help
@@ -114,6 +124,26 @@ $(BUILD)/%.o: %.asm
 	@mkdir -p $(dir $@)
 	@echo "  AS  $<"
 	$(AS) $(ASFLAGS) $< -o $@
+
+# ── Userland test program: build as a real static ELF64, then embed
+#    its raw bytes as a linkable object (symbols _binary_hello_elf_*)
+#    Linked well above 1GB (0x40010000, with margin — the linker
+#    reserves a page before .text for the ELF/program headers, so
+#    -Ttext=0x40000000 exactly would still put the segment's actual
+#    start one page *below* 1GB) — deliberately past the boot
+#    identity map's 0-1GB range of 2MB huge pages, which the VMM
+#    can't yet split for a fine-grained user mapping.
+$(USERLAND_ELF): userland/hello.c
+	@mkdir -p $(dir $@)
+	@echo "  CC  $< (userland, ring 3)"
+	x86_64-elf-gcc -ffreestanding -fno-stack-protector -fno-pie -no-pie \
+		-nostdlib -static -std=c11 -Wall -Wextra \
+		-Wl,--entry=_start -Wl,-Ttext=0x40010000 \
+		-o $@ $<
+
+$(USERLAND_EMBED): $(USERLAND_ELF)
+	@echo "  LD  $< (embed)"
+	cd $(dir $@) && x86_64-elf-ld -r -b binary -o $(notdir $@) $(notdir $<)
 
 # ── Make bootable ISO (needs grub) ──────────────────────
 iso: $(KERNEL)
