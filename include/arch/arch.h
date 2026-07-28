@@ -73,4 +73,11 @@ u64  arch_timer_ticks(void);        /* ticks since boot                */
 void* arch_thread_init_stack(void* stack_top, void (*entry)(void*), void* arg);
 void  arch_context_switch(void** old_sp, void* new_sp);
 
+/* --- Block storage ---
+ * A single simple read-only block device (512-byte sectors), if the
+ * platform has one. Archs without storage yet can leave
+ * arch_disk_available() returning false. */
+bool arch_disk_available(void);
+bool arch_disk_read_sector(u32 lba, u8* buf);
+
 #endif /* ARCH_H */

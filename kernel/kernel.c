@@ -10,6 +10,7 @@
 #include <mm/heap.h>
 #include <gui/gui.h>
 #include <kernel/sched.h>
+#include <fs/vfs.h>
 
 /* Global kernel state — readable from anywhere */
 kernel_state_t kernel_state = KERNEL_STATE_BOOT;
@@ -89,6 +90,26 @@ void kernel_main(u64 boot_magic, void* boot_info)
 
     /* 6. Late arch init */
     arch_late_init();
+
+    /* 6a. Filesystem — proves disk -> driver -> VFS end to end */
+    vfs_init();
+    if (vfs_available()) {
+        char filebuf[128];
+        u32 filesize = 0;
+        bool ok = vfs_read_file("hello.txt", filebuf, sizeof(filebuf) - 1, &filesize);
+        if (ok) {
+            u32 shown = filesize < sizeof(filebuf) - 1 ? filesize : sizeof(filebuf) - 1;
+            filebuf[shown] = '\0';
+        }
+        if (arch_gfx_available())
+            arch_gfx_draw_string(10, 30, ok ? filebuf : "VFS: READ FAILED",
+                                  ok ? 0x0000FFFF : 0x00FF0000, 0x00102030);
+        else
+            console_puts(ok ? filebuf : "VFS: READ FAILED\n");
+    } else if (arch_gfx_available()) {
+        arch_gfx_draw_string(10, 30, "VFS: NOT AVAILABLE", 0x00FF0000, 0x00102030);
+    }
+
     gui_init();
 
     /* 6b. Scheduler — this call stack becomes thread 0 */

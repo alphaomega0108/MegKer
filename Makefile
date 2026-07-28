@@ -24,7 +24,7 @@ ifeq ($(ARCH), x86_64)
                -Iinclude
     LDFLAGS := -T arch/x86_64/linker.ld            \
                -z max-page-size=0x1000
-    QFLAGS  := -machine q35                        \
+    QFLAGS  := -machine pc                         \
                -m 256M                             \
                -serial stdio                       \
                -no-reboot                          \
@@ -78,7 +78,7 @@ ARCH_C_SRCS := $(shell find arch/$(ARCH)/ -name "*.c" 2>/dev/null)
 ARCH_ASM_SRCS := $(shell find arch/$(ARCH)/ -name "*.asm" 2>/dev/null)
 
 # Common kernel .c files
-KERN_SRCS := $(shell find kernel/ mm/ lib/ gui/ -name "*.c" 2>/dev/null)
+KERN_SRCS := $(shell find kernel/ mm/ lib/ gui/ fs/ -name "*.c" 2>/dev/null)
 
 # All object files
 ARCH_C_OBJS   := $(patsubst %.c,   $(BUILD)/%.o, $(ARCH_C_SRCS))
@@ -91,8 +91,10 @@ KERN_OBJS     := $(patsubst %.c,   $(BUILD)/%.o, $(KERN_SRCS))
 ifeq ($(ARCH), x86_64)
     USERLAND_ELF   := $(BUILD)/userland/hello.elf
     USERLAND_EMBED := $(BUILD)/userland/hello_embed.o
+    DISK_IMG       := $(BUILD)/disk.img
 else
     USERLAND_EMBED :=
+    DISK_IMG       :=
 endif
 
 ALL_OBJS := $(ARCH_ASM_OBJS) $(ARCH_C_OBJS) $(KERN_OBJS) $(USERLAND_EMBED)
@@ -145,6 +147,14 @@ $(USERLAND_EMBED): $(USERLAND_ELF)
 	@echo "  LD  $< (embed)"
 	cd $(dir $@) && x86_64-elf-ld -r -b binary -o $(notdir $@) $(notdir $<)
 
+# ── Disk image: a tiny read-only filesystem (see fs/vfs.c) built by
+#    tools/mkfs.py from whatever's in fsroot/, attached as a second
+#    QEMU drive (the CD-ROM is the boot device, this is data only).
+$(DISK_IMG): tools/mkfs.py fsroot/hello.txt
+	@mkdir -p $(dir $@)
+	@echo "  MKFS $@"
+	python3 tools/mkfs.py $@ fsroot/hello.txt
+
 # ── Make bootable ISO (needs grub) ──────────────────────
 iso: $(KERNEL)
 	@mkdir -p $(BUILD)/iso/boot/grub
@@ -159,14 +169,18 @@ iso: $(KERNEL)
 	@echo "  ✓ ISO created: $(ISO)"
 
 # ── Run in QEMU ─────────────────────────────────────────
-run: iso
+# Machine type is `pc` (i440fx), not q35: q35 has no legacy IDE
+# controller at the classic ports by default (AHCI/SATA only), which
+# the ATA PIO driver (arch/x86_64/drivers/ata.c) needs for the disk.
+run: iso $(DISK_IMG)
 	@echo "  Launching QEMU..."
 	$(QEMU) \
-		-machine q35 \
+		-machine pc \
 		-m 256M \
 		-serial stdio \
 		-no-reboot \
 		-no-shutdown \
+		-drive file=$(DISK_IMG),format=raw,if=ide \
 		-cdrom $(BUILD)/megker.iso \
 		-boot d
 

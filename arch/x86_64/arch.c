@@ -4,6 +4,7 @@
  */
 
 #include <arch/arch.h>
+#include <arch/x86_64/ata.h>
 #include <arch/x86_64/framebuffer.h>
 #include <arch/x86_64/idt.h>
 #include <arch/x86_64/keyboard.h>
@@ -75,6 +76,7 @@ static bool vmm_selftest(void)
 void arch_late_init(void)
 {
     keyboard_init();
+    ata_init();
 
     fb_init();
     if (fb_available()) {
@@ -171,3 +173,6 @@ u64 arch_timer_ticks(void)
 {
     return pit_get_ticks();
 }
+
+bool arch_disk_available(void) { return ata_available(); }
+bool arch_disk_read_sector(u32 lba, u8* buf) { return ata_read_sector(lba, buf); }
