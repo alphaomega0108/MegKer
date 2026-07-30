@@ -10,8 +10,10 @@
 
 #include <arch/arch.h>
 #include <arch/aarch64/gic.h>
+#include <arch/aarch64/mmu.h>
 #include <arch/aarch64/timer.h>
 #include <arch/aarch64/uart.h>
+#include <arch/aarch64/vmm.h>
 #include <kernel/kernel.h>
 #include <kernel/types.h>
 #include <mm/pmm.h>
@@ -33,11 +35,59 @@ const char* arch_name(void)
 
 void arch_early_init(void)
 {
+    /* Turns the MMU on — must run before anything else so every
+     * subsequent access (console, memory, interrupts) is a virtual
+     * one from the very start, the same as x86_64's paging being
+     * live before its first C instruction. */
+    aarch64_mmu_init();
     uart_init();
+}
+
+static void puts(const char* s)
+{
+    while (*s)
+        uart_putc(*s++);
+}
+
+/* Proves address-space isolation actually works, mirroring x86_64's
+ * vmm_selftest(): map a fresh frame at a virtual address only inside
+ * a brand-new address space, confirm it reads back correctly there,
+ * and confirm it's genuinely invisible from the kernel's own space. */
+static bool vmm_selftest(void)
+{
+    const virtaddr test_va = 0x80000000ULL;   /* 2GB — past both boot L1 blocks (device + RAM), untouched */
+
+    if (vmm_translate(vmm_kernel_space(), test_va) != 0)
+        return false;   /* not a clean test address */
+
+    address_space_t* as = vmm_create_address_space();
+    physaddr frame = pmm_alloc_frame();
+    if (!frame)
+        return false;
+
+    vmm_map(as, test_va, frame, VMM_PRESENT | VMM_WRITABLE);
+
+    vmm_switch(as);
+    *(volatile u32*)test_va = 0xDEADBEEF;
+    bool readback_ok = (*(volatile u32*)test_va == 0xDEADBEEF);
+    vmm_switch(vmm_kernel_space());
+
+    bool isolated_ok = (vmm_translate(vmm_kernel_space(), test_va) == 0);
+    bool mapped_ok    = (vmm_translate(as, test_va) == (frame | 0));
+
+    vmm_destroy_address_space(as);
+    pmm_free_frame(frame);
+
+    return readback_ok && isolated_ok && mapped_ok;
 }
 
 void arch_late_init(void)
 {
+    bool ok = vmm_selftest();
+    puts(ok ? "VMM: OK\n" : "VMM: FAIL\n");
+    if (!ok)
+        kernel_panic("VMM self-test failed");
+
     /* PL011 RX interrupt, graphics, disk: all future work — see
      * README known limitations. */
 }
@@ -91,6 +141,7 @@ void arch_mm_init(u64 boot_magic, void* boot_info)
         .length = AARCH64_RAM_SIZE,
     };
     pmm_init(&region, 1, (physaddr)_kernel_start, (physaddr)_kernel_end);
+    vmm_init();
 }
 
 u64 arch_get_total_ram(void)
