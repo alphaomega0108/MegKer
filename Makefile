@@ -66,6 +66,8 @@ else ifeq ($(ARCH), aarch64)
                -display none                       \
                -global virtio-mmio.force-legacy=false \
                -device ramfb                       \
+               -device virtio-keyboard-device       \
+               -device virtio-mouse-device          \
                -kernel $(KERNEL)                   \
                -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 \
                -device virtio-blk-device,drive=hd0

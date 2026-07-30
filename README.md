@@ -13,35 +13,46 @@ even a particular word size exists.
 
 ## Current status
 
-**x86_64 is a complete, if minimal, monolithic OS**: it boots via GRUB2/
-Multiboot2, drives a graphical GUI with mouse and keyboard, preemptively
-schedules kernel threads, runs real ELF64 executables in ring 3 with
-syscalls and isolated address spaces, and reads files off a disk through a
-small VFS. All of it runs together, verified working concurrently.
+**Both x86_64 and aarch64 are complete, minimal monolithic OSes** —
+boot, memory management, interrupts, a preemptive scheduler, virtual
+memory with isolated address spaces, real ring-3/EL0 userspace with
+syscalls, a disk + filesystem, and a graphical GUI with mouse and
+keyboard, all running together and verified working concurrently on
+each. They get there by almost entirely different means (Multiboot2 vs.
+a raw ELF boot; PIC/PIT vs. GICv2/Generic Timer; ATA/PS2/VBE vs.
+virtio-blk/virtio-input/ramfb) — which is the actual point: `kernel/`,
+`mm/pmm.c`, `mm/heap.c`, `gui/gui.c`, and `fs/vfs.c` are byte-for-byte
+identical between them, and every one of those started working on
+aarch64 the moment its `arch_*` functions were backed by something real,
+with zero changes to the shared code itself.
 
-**aarch64 now boots with the MMU on, preemptively schedules kernel
-threads, isolates address spaces, runs real EL0 userspace executables
-with syscalls, reads a file off a virtio-blk disk, and drives the same
-GUI compositor x86_64 uses** — feature-equivalent to x86_64 short of
-keyboard/mouse input. It boots straight from QEMU's ELF loader (no
-bootloader stage), drops from whatever EL it resets into down to EL1,
-enables the MMU with a static identity map before anything else runs,
-brings up a PL011 console and memory (PMM + heap), then a GICv2 + ARM
-Generic Timer drive the same arch-independent round-robin scheduler
-x86_64 uses. A dynamic per-address-space VMM sits on top of the boot
-identity map (proven by the same isolation self-test x86_64 uses), an
-embedded ELF64 test binary runs at EL0 and exits cleanly via `svc`
-syscalls, a generic virtio-mmio + virtqueue driver backs a read-only
-virtio-blk device, and a `ramfb` framebuffer (configured over QEMU's
-fw_cfg DMA interface) renders `gui/gui.c`'s draggable windows and cursor
-— the exact same compositor output x86_64 produces, unmodified — proven
-by a `screendump` capture, not just a status line. Verified over serial
+**x86_64**: boots via GRUB2/Multiboot2, drives a graphical GUI with
+mouse and keyboard, preemptively schedules kernel threads, runs real
+ELF64 executables in ring 3 with syscalls and isolated address spaces,
+and reads files off a disk through a small VFS.
+
+**aarch64**: boots straight from QEMU's ELF loader (no bootloader
+stage) targeting the `virt` machine, drops from whatever EL it resets
+into down to EL1, enables the MMU with a static identity map before
+anything else runs, brings up a PL011 console and memory (PMM + heap +
+a dynamic per-address-space VMM, proven by the same isolation self-test
+x86_64 uses), a GICv2 + ARM Generic Timer drive the same round-robin
+scheduler x86_64 uses, an embedded ELF64 test binary runs at EL0 and
+exits cleanly via `svc` syscalls, a generic virtio-mmio + virtqueue
+driver backs a read-only virtio-blk disk (the same VFS x86_64 uses reads
+a real file off it), a `ramfb` framebuffer (configured over QEMU's
+fw_cfg DMA interface) renders `gui/gui.c`'s draggable windows, and
+virtio-input keyboard/mouse make that GUI actually interactive —
+verified with a live `screendump`-captured drag (a window moved to the
+cursor and changed color on click) and keystrokes echoed back exactly
+as typed (`sendkey h e l l o shift-1` → `hello!`). Verified over serial
 end to end: `HELLO FROM EL0` / `USERLAND: EXIT 0` /
-`FILE READ FROM DISK VIA VFS` / `FB: OK`. Only keyboard/mouse input is
-missing now — see "What's implemented" below for the exact line.
+`FILE READ FROM DISK VIA VFS` / `FB: OK`.
 
 `arm32` and MCU targets (`rp2040`, `stm32f4`) still exist as empty
-scaffolding in `arch/` and in the Makefile, with no code yet.
+scaffolding in `arch/` and in the Makefile, with no code yet — the actual
+next frontier, now that the `arch.h` abstraction has been proven against
+both a from-scratch x86_64 driver stack and a virtio-based one.
 
 ### x86_64 boot sequence
 
@@ -124,6 +135,12 @@ silently.
    `gui_update()` — both already unconditional, arch-independent code —
    start actually drawing the moment `arch_gfx_available()` turns true,
    the same way `fs/vfs.c` "just worked" once virtio-blk landed.
+9. Finally, `virtio_input_init()` finds and initializes two
+   VIRTIO_DEV_INPUT devices — indistinguishable by device ID alone, so
+   each candidate's config-space name is queried to tell the keyboard
+   from the mouse — and once `arch_keyboard_getchar()`/
+   `arch_mouse_get_state()` are real, `gui/gui.c`'s existing click/drag
+   handling works with no changes at all.
 
 ### What's implemented (aarch64)
 
@@ -142,9 +159,10 @@ silently.
 | Disk + FS     | `arch/aarch64/drivers/virtio.c`, `virtio_blk.c`, `fs/vfs.c`       | Generic virtio-mmio + virtqueue transport (probed by device ID across all 32 mmio slots, not a fixed slot assumption), synchronous virtio-blk on top, same read-only VFS x86_64 uses |
 | Graphics      | `arch/aarch64/drivers/framebuffer.c`, `font8x8.c`                 | `ramfb` linear framebuffer configured over QEMU's fw_cfg DMA interface; `font8x8.c` is an unmodified copy of x86_64's (pure bitmap data, no hardware dependency) |
 | GUI           | `gui/gui.c`                                                       | The exact same arch-independent compositor x86_64 uses — draggable windows, cursor — unmodified, running the moment `arch_gfx_available()` is real |
+| Input         | `arch/aarch64/drivers/virtio_input.c`                             | Two virtio-input devices (keyboard + mouse), told apart by config-space name (`VIRTIO_INPUT_CFG_ID_NAME`) rather than assumed slot order; async event-buffer polling (distinct from virtio-blk's synchronous request/response) via `virtio_poll_used()`/`virtio_publish_avail()` |
 
-Everything else in `arch.h` — keyboard/mouse — is stubbed to "not
-available" (`false`/no-op) rather than implemented.
+Every `arch.h` function aarch64 implements now backs something real —
+there's no remaining "stubbed to not available" subsystem on this arch.
 
 ### Known limitations (honest, not hidden)
 
@@ -165,22 +183,22 @@ available" (`false`/no-op) rather than implemented.
   writes, not FAT/ext/anything-standard. It exists to prove the disk →
   driver → VFS chain works, not to read real-world disk images.
 - Everything in the table above is x86_64-only.
-- **aarch64 has boot, memory, interrupts, a preemptive scheduler, a
-  working VMM, EL0 userspace, a disk, and graphics, but no
-  keyboard/mouse.** The GUI renders but nothing can click or drag
-  anything yet — `arch_mouse_get_state()` always returns false and
-  `arch_keyboard_getchar()` always returns 0. Same one-process-at-a-time
-  and no-syscall-pointer-validation caveats as x86_64 apply here too —
-  `process_run()` isn't threaded into `kernel/sched.c`'s ready queue, and
-  EL0 pointers are dereferenced directly rather than copied/validated.
-  virtio-blk is synchronous/polling like the x86_64 ATA driver — no
-  virtio interrupt handling exists, so only one request is ever
-  outstanding. The boot identity map is coarse (two static 1GB blocks)
+- **aarch64 has full feature parity with x86_64** (boot, memory,
+  interrupts, scheduler, VMM, userspace, disk, graphics, input), but by
+  a genuinely different implementation path, so its own gaps differ from
+  x86_64's. Same one-process-at-a-time and no-syscall-pointer-validation
+  caveats as x86_64 apply here too — `process_run()` isn't threaded into
+  `kernel/sched.c`'s ready queue, and EL0 pointers are dereferenced
+  directly rather than copied/validated. virtio-blk is
+  synchronous/polling like the x86_64 ATA driver — no virtio interrupt
+  handling exists, so only one request is ever outstanding (virtio-input
+  is polled too, but that's inherent to an event stream rather than a
+  limitation). The boot identity map is coarse (two static 1GB blocks)
   and can't be split into fine-grained mappings, the AArch64 equivalent
   of x86_64's huge-page-splitting gap. The RAM size is hardcoded to
   match the Makefile's `-m 1G` rather than parsed from the device tree
-  QEMU hands in — a real DTB parser is future work,
-  same spirit as x86_64's Multiboot2 memory-map walk.
+  QEMU hands in — a real DTB parser is future work, same spirit as
+  x86_64's Multiboot2 memory-map walk.
 - `arm32`/MCU targets have no code yet.
 
 ## Architecture abstraction
@@ -280,33 +298,39 @@ live from the demo disk file.
 
 `make ARCH=aarch64 run` boots straight into the kernel with no bootloader
 stage (QEMU's `-kernel` loads the ELF directly) and prints the boot banner
-over serial. `-display none` is still the default in `QFLAGS` — a
-`ramfb` device is attached and does render the GUI, but with no
-keyboard/mouse input yet there's nothing to interact with, so there's
-no real reason to open a window; use QEMU's HMP monitor
-(`-monitor unix:/path,server,nowait`, then `screendump out.png`) if you
-want to see the framebuffer content, same as this project's own testing
-does. `QFLAGS` also passes `-global virtio-mmio.force-legacy=false`:
+over serial. `-display none` is still the default in `QFLAGS`, since
+headless is this project's own default testing mode — a `ramfb` device
+renders the GUI and virtio-keyboard/virtio-mouse devices are attached, so
+it's fully interactive if you swap in a real display backend (e.g.
+`-display cocoa` on macOS, `-display gtk` on Linux) instead. To see it
+headless the way this project's own testing does, use QEMU's HMP monitor
+(`-monitor unix:/path,server,nowait`), then `screendump out.png` to
+capture a frame, and `sendkey`/`mouse_move`/`mouse_button` to drive
+input. `QFLAGS` also passes `-global virtio-mmio.force-legacy=false`:
 QEMU's virtio-mmio devices default to the legacy (version 1) interface,
 and `arch/aarch64/drivers/virtio.c` only speaks the modern one.
 
 ## Known gaps / next steps
 
-x86_64:
+x86_64 and aarch64 (shared in spirit, different specifics — see each
+arch's own limitations above for exact detail):
 - Real multi-process scheduling (processes as schedulable entities in
   `kernel/sched.c`'s ready queue, not one synchronous launch at a time).
 - Syscall pointer validation / copy-from-user.
-- Huge-page splitting in the VMM.
-- A real filesystem (or at least subdirectories/writes on the current one),
-  and a disk driver that isn't PIO-polling-only.
+- A real filesystem (or at least subdirectories/writes on the current
+  one), and disk drivers that aren't polling-only (x86_64's ATA PIO,
+  aarch64's synchronous virtio-blk).
+- Splitting large mappings for fine-grained access: x86_64's boot huge
+  pages, aarch64's two boot identity-map blocks.
 
-aarch64 (the actual next frontier — proving `arch.h` on hardware nothing
-like x86_64):
-- virtio-input for keyboard/mouse, on top of the virtio-mmio transport
-  virtio-blk already established — then `gui/gui.c` should become
-  interactive with no further changes, the same way it started
-  rendering unmodified once `ramfb` landed.
+aarch64-specific:
 - A real device-tree parser, so RAM size comes from what QEMU actually
   reports instead of a hardcoded constant matched to the Makefile's `-m`
   flag.
-- `arm32` and the MCU targets still have no code at all.
+
+`arm32` and the MCU targets (`rp2040`, `stm32f4`) are the actual next
+frontier now: two complete, independently-implemented architectures
+back the `arch.h` abstraction, but every one of them so far has had an
+MMU and been at least 32-bit. The 8051 end of this project's own stated
+range — no MMU, no privilege levels, kilobytes of RAM — will demand
+changes to `arch.h` itself, not just a new backend for it.

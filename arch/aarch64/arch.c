@@ -2,10 +2,6 @@
  * Implements the arch abstraction layer for aarch64, targeting
  * QEMU's `virt` machine. kernel_main() calls these — never touches
  * hardware directly.
- *
- * Boot/console/memory/interrupts/timer/scheduler are real. No
- * graphics, no input, no disk yet — every such stub is called out
- * below rather than hidden.
  */
 
 #include <arch/arch.h>
@@ -16,6 +12,7 @@
 #include <arch/aarch64/timer.h>
 #include <arch/aarch64/uart.h>
 #include <arch/aarch64/virtio_blk.h>
+#include <arch/aarch64/virtio_input.h>
 #include <arch/aarch64/vmm.h>
 #include <kernel/kernel.h>
 #include <kernel/types.h>
@@ -126,8 +123,9 @@ void arch_late_init(void)
     fb_init();
     puts(fb_available() ? "FB: OK\n" : "FB: NOT AVAILABLE\n");
 
-    /* PL011 RX interrupt, input: future work — see README known
-     * limitations. */
+    virtio_input_init();   /* needs fb_width()/fb_height() for the initial cursor position */
+
+    /* PL011 RX interrupt: future work — see README known limitations. */
 }
 
 void arch_console_init(void)   { }
@@ -136,13 +134,12 @@ void arch_console_clear(void)  { }
 
 char arch_keyboard_getchar(void)
 {
-    return 0;   /* no input device wired up yet */
+    return virtio_keyboard_getchar();
 }
 
 bool arch_mouse_get_state(i32* x, i32* y, u8* buttons)
 {
-    UNUSED(x); UNUSED(y); UNUSED(buttons);
-    return false;
+    return virtio_mouse_get_state(x, y, buttons);
 }
 
 bool arch_gfx_available(void) { return fb_available(); }

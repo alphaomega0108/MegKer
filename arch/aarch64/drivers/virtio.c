@@ -40,6 +40,7 @@
 #define VIRTIO_MMIO_QUEUE_AVAIL_HIGH     0x094
 #define VIRTIO_MMIO_QUEUE_USED_LOW       0x0a0
 #define VIRTIO_MMIO_QUEUE_USED_HIGH      0x0a4
+#define VIRTIO_MMIO_CONFIG               0x100
 
 #define VIRTIO_MAGIC 0x74726976u   /* "virt" */
 
@@ -67,19 +68,25 @@ static u16* avail_ring(virtio_device_t* d)  { return (u16*)(d->avail + 4); }
 static u16* used_idx(virtio_device_t* d)    { return (u16*)(d->used + 2); }
 static used_elem_t* used_ring(virtio_device_t* d) { return (used_elem_t*)(d->used + 4); }
 
-bool virtio_mmio_probe(u32 device_id, virtio_device_t* dev)
+static volatile u8* find_slot(u32 device_id, u32 index)
 {
-    volatile u8* base = NULL;
-
+    u32 seen = 0;
     for (u32 i = 0; i < VIRTIO_MMIO_SLOTS; i++) {
         volatile u8* candidate = (volatile u8*)(VIRTIO_MMIO_BASE0 + i * VIRTIO_MMIO_STRIDE);
         if (mmio_read(candidate, VIRTIO_MMIO_MAGIC_VALUE) != VIRTIO_MAGIC)
             continue;
         if (mmio_read(candidate, VIRTIO_MMIO_DEVICE_ID) != device_id)
             continue;
-        base = candidate;
-        break;
+        if (seen == index)
+            return candidate;
+        seen++;
     }
+    return NULL;
+}
+
+bool virtio_mmio_probe_nth(u32 device_id, u32 index, virtio_device_t* dev)
+{
+    volatile u8* base = find_slot(device_id, index);
     if (!base)
         return false;
 
@@ -140,6 +147,31 @@ bool virtio_mmio_probe(u32 device_id, virtio_device_t* dev)
     return true;
 }
 
+bool virtio_mmio_probe(u32 device_id, virtio_device_t* dev)
+{
+    return virtio_mmio_probe_nth(device_id, 0, dev);
+}
+
+u8 virtio_config_read8(virtio_device_t* dev, u32 off)
+{
+    return *(volatile u8*)(dev->mmio_base + VIRTIO_MMIO_CONFIG + off);
+}
+
+void virtio_config_write8(virtio_device_t* dev, u32 off, u8 val)
+{
+    *(volatile u8*)(dev->mmio_base + VIRTIO_MMIO_CONFIG + off) = val;
+}
+
+static void publish(virtio_device_t* dev, u16 desc_index)
+{
+    u16 slot = (u16)(*avail_idx(dev) % dev->queue_size);
+    avail_ring(dev)[slot] = desc_index;
+    __asm__ volatile ("dmb ish" ::: "memory");
+    (*avail_idx(dev))++;
+    __asm__ volatile ("dmb ish" ::: "memory");
+    mmio_write(dev->mmio_base, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
+}
+
 u32 virtio_submit_and_wait(virtio_device_t* dev, virtq_desc_t* descs, u16 count)
 {
     for (u16 i = 0; i < count; i++) {
@@ -149,13 +181,7 @@ u32 virtio_submit_and_wait(virtio_device_t* dev, virtq_desc_t* descs, u16 count)
         dev->desc[i].next  = (u16)((i + 1 < count) ? (i + 1) : 0);
     }
 
-    u16 slot = (u16)(*avail_idx(dev) % dev->queue_size);
-    avail_ring(dev)[slot] = 0;   /* head descriptor index — always 0, one request at a time */
-    __asm__ volatile ("dmb ish" ::: "memory");
-    (*avail_idx(dev))++;
-    __asm__ volatile ("dmb ish" ::: "memory");
-
-    mmio_write(dev->mmio_base, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
+    publish(dev, 0);   /* head descriptor index — always 0, one request at a time */
 
     while (*used_idx(dev) == dev->used_seen) { }
     __asm__ volatile ("dmb ish" ::: "memory");
@@ -163,4 +189,23 @@ u32 virtio_submit_and_wait(virtio_device_t* dev, virtq_desc_t* descs, u16 count)
     u32 len = used_ring(dev)[dev->used_seen % dev->queue_size].len;
     dev->used_seen++;
     return len;
+}
+
+bool virtio_poll_used(virtio_device_t* dev, u16* desc_index, u32* len)
+{
+    if (*used_idx(dev) == dev->used_seen)
+        return false;
+
+    __asm__ volatile ("dmb ish" ::: "memory");
+    used_elem_t e = used_ring(dev)[dev->used_seen % dev->queue_size];
+    dev->used_seen++;
+
+    if (desc_index) *desc_index = (u16)e.id;
+    if (len)        *len        = e.len;
+    return true;
+}
+
+void virtio_publish_avail(virtio_device_t* dev, u16 desc_index)
+{
+    publish(dev, desc_index);
 }
