@@ -11,12 +11,18 @@
 #include <arch/arch.h>
 #include <arch/aarch64/gic.h>
 #include <arch/aarch64/mmu.h>
+#include <arch/aarch64/process.h>
 #include <arch/aarch64/timer.h>
 #include <arch/aarch64/uart.h>
 #include <arch/aarch64/vmm.h>
 #include <kernel/kernel.h>
 #include <kernel/types.h>
 #include <mm/pmm.h>
+
+/* Embedded by the Makefile (ld -r -b binary) from the built
+ * userland/hello_aarch64.c — a real static ELF64 test executable. */
+extern const u8 _binary_hello_elf_start[];
+extern const u8 _binary_hello_elf_end[];
 
 /* QEMU's `virt` machine puts RAM at 0x40000000. Real device-tree
  * parsing to discover the actual installed size is future work (see
@@ -81,12 +87,38 @@ static bool vmm_selftest(void)
     return readback_ok && isolated_ok && mapped_ok;
 }
 
+static void put_dec(u32 v)
+{
+    char buf[11];
+    int i = 10;
+    buf[i] = '\0';
+    if (v == 0) {
+        uart_putc('0');
+        return;
+    }
+    while (v > 0) {
+        buf[--i] = (char)('0' + (v % 10));
+        v /= 10;
+    }
+    puts(&buf[i]);
+}
+
 void arch_late_init(void)
 {
     bool ok = vmm_selftest();
     puts(ok ? "VMM: OK\n" : "VMM: FAIL\n");
     if (!ok)
         kernel_panic("VMM self-test failed");
+
+    usize hello_size = (usize)(_binary_hello_elf_end - _binary_hello_elf_start);
+    i32 exit_code = process_run(_binary_hello_elf_start, hello_size);
+    if (exit_code < 0) {
+        puts("USERLAND: LOAD FAILED\n");
+    } else {
+        puts("USERLAND: EXIT ");
+        put_dec((u32)exit_code);
+        puts("\n");
+    }
 
     /* PL011 RX interrupt, graphics, disk: all future work — see
      * README known limitations. */

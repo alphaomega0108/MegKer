@@ -20,17 +20,19 @@ syscalls and isolated address spaces, and reads files off a disk through a
 small VFS. All of it runs together, verified working concurrently.
 
 **aarch64 now boots with the MMU on, preemptively schedules kernel
-threads, and isolates address spaces**, targeting QEMU's `virt` machine:
-it boots straight from QEMU's ELF loader (no bootloader stage), drops from
-whatever EL it resets into down to EL1, enables the MMU with a static
-identity map before anything else runs, brings up a PL011 console and
-memory (PMM + heap), then a GICv2 + ARM Generic Timer drive the same
-arch-independent round-robin scheduler x86_64 uses. A dynamic
-per-address-space VMM sits on top of the boot identity map, verified by
-the same isolation self-test x86_64 uses: a fresh mapping is visible only
-inside its own address space and provably absent from the kernel's. No
-graphics, input, disk, or EL0 userspace yet — see "What's implemented"
-below for the exact line.
+threads, isolates address spaces, and runs real EL0 userspace
+executables with syscalls** — feature-equivalent to x86_64 short of
+graphics, input, and disk. It boots straight from QEMU's ELF loader (no
+bootloader stage), drops from whatever EL it resets into down to EL1,
+enables the MMU with a static identity map before anything else runs,
+brings up a PL011 console and memory (PMM + heap), then a GICv2 + ARM
+Generic Timer drive the same arch-independent round-robin scheduler
+x86_64 uses. A dynamic per-address-space VMM sits on top of the boot
+identity map (proven by the same isolation self-test x86_64 uses), and an
+embedded ELF64 test binary runs at EL0, makes two `svc` syscalls, and
+exits cleanly — confirmed over serial: `HELLO FROM EL0` /
+`USERLAND: EXIT 0`. No graphics, input, or disk yet — see "What's
+implemented" below for the exact line.
 
 `arm32` and MCU targets (`rp2040`, `stm32f4`) still exist as empty
 scaffolding in `arch/` and in the Makefile, with no code yet.
@@ -101,13 +103,19 @@ silently.
    `arch_keyboard_getchar()` (always 0 for now) instead of running the
    GUI, but the timer-driven scheduler tick keeps firing underneath it
    regardless.
+6. `arch_late_init()` runs the VMM self-test, then `process_run()`
+   (`arch/aarch64/process.c`) loads an embedded ELF64 test binary into a
+   fresh address space and drops to EL0 via `eret` — the same
+   suspend/resume trick kernel threads use (`arch_context_switch()`)
+   launches and later resumes from the process, rather than a dedicated
+   mechanism.
 
 ### What's implemented (aarch64)
 
 | Subsystem     | File(s)                                                          | Notes |
 |---------------|-------------------------------------------------------------------|-------|
 | Boot          | `arch/aarch64/boot/boot.S`, `linker.ld`                           | EL3/EL2→EL1 drop, targets QEMU's `virt` machine |
-| Exceptions    | `arch/aarch64/boot/exceptions.S`                                  | Full VBAR_EL1 vector table; only IRQ (current EL, SPx) has a real handler — everything else still halts |
+| Exceptions    | `arch/aarch64/boot/exceptions.S`                                  | Full VBAR_EL1 vector table; real handlers for IRQ (current EL + lower EL AArch64) and SVC (lower EL AArch64) — everything else still halts |
 | Interrupts    | `arch/aarch64/drivers/gic.c`, `irq.c`                             | GICv2, Distributor + CPU interface; `GICC_CTLR.AckCtl` needed since EL1 reads as a Secure access with no EL3 firmware present (see commit for the debugging story) |
 | Timer         | `arch/aarch64/drivers/timer.c`                                    | ARM Generic Timer, non-secure EL1 physical timer, PPI 30; drives the scheduler tick |
 | Console       | `arch/aarch64/drivers/uart.c`                                     | PL011, polled, fixed MMIO base (`0x09000000`) |
@@ -115,6 +123,7 @@ silently.
 | Kernel heap   | `mm/heap.c`                                                       | Identical arch-independent allocator, unmodified — heap frames stay identity-mapped by the boot VMM regardless of which address space is active |
 | Virtual mem   | `arch/aarch64/mm/mmu_boot.c`, `mm/vmm.c`                          | 4KB granule, 3-level (L1→L2→L3, 39-bit VA); static 2-block boot identity map, then a dynamic per-address-space VMM cloned from it, same aliasing/isolation model as x86_64's PML4 clone |
 | Scheduler     | `kernel/sched.c`, `arch/aarch64/sched.c`, `boot/context_switch.S` | Same round-robin policy as x86_64; AArch64 context switch saves/restores x19–x30 per AAPCS64 |
+| Userspace     | `arch/aarch64/process.c`, `syscall.c`, `boot/usermode.S`          | Real ELF64 loader, EL0 execution, `svc` syscalls (x8=number, x0-x2=args, x0=return), isolated address space per process |
 
 Everything else in `arch.h` — graphics, keyboard/mouse, disk — is stubbed
 to "not available" (`false`/`0`/no-op) rather than implemented.
@@ -138,16 +147,17 @@ to "not available" (`false`/`0`/no-op) rather than implemented.
   writes, not FAT/ext/anything-standard. It exists to prove the disk →
   driver → VFS chain works, not to read real-world disk images.
 - Everything in the table above is x86_64-only.
-- **aarch64 has boot, memory, interrupts, a preemptive scheduler, and a
-  working VMM, but no userspace, no graphics, no keyboard/mouse, no
-  disk.** The VMM's per-address-space isolation is proven by a self-test,
-  the same as x86_64's, but nothing actually uses a non-kernel address
-  space yet — that's what EL0 userspace needs next. The boot identity map
-  is coarse (two static 1GB blocks) and can't be split into fine-grained
-  mappings, the AArch64 equivalent of x86_64's huge-page-splitting gap.
-  The RAM size is hardcoded to match the Makefile's `-m 1G` rather than
-  parsed from the device tree QEMU hands in — a real DTB parser is future
-  work, same spirit as x86_64's Multiboot2 memory-map walk.
+- **aarch64 has boot, memory, interrupts, a preemptive scheduler, a
+  working VMM, and EL0 userspace, but no graphics, no keyboard/mouse, no
+  disk.** Same one-process-at-a-time and no-syscall-pointer-validation
+  caveats as x86_64 apply here too — `process_run()` isn't threaded into
+  `kernel/sched.c`'s ready queue, and EL0 pointers are dereferenced
+  directly rather than copied/validated. The boot identity map is coarse
+  (two static 1GB blocks) and can't be split into fine-grained mappings,
+  the AArch64 equivalent of x86_64's huge-page-splitting gap. The RAM
+  size is hardcoded to match the Makefile's `-m 1G` rather than parsed
+  from the device tree QEMU hands in — a real DTB parser is future work,
+  same spirit as x86_64's Multiboot2 memory-map walk.
 - `arm32`/MCU targets have no code yet.
 
 ## Architecture abstraction
@@ -202,7 +212,8 @@ gui/                   Arch-independent windowing compositor
 fs/                    Arch-independent VFS
 drivers/               (not yet populated — arch-independent drivers go here)
 lib/                   (not yet populated — freestanding libc-ish helpers)
-userland/              Userspace test programs (hello.c), built as real ELF64
+userland/              Userspace test programs (hello.c, hello_aarch64.c —
+                       one per arch's syscall ABI), built as real ELF64
                        binaries and embedded into the kernel image
 fsroot/                Files packed into the demo filesystem image by mkfs.py
 tools/
@@ -262,9 +273,6 @@ x86_64:
 
 aarch64 (the actual next frontier — proving `arch.h` on hardware nothing
 like x86_64):
-- EL0 userspace: SVC syscalls, dropping to EL0 via `eret` (the same
-  mechanism `boot.S` already uses for EL-drops, aimed one level lower),
-  and reusing the existing ELF64 loader logic.
 - A virtio-mmio transport + virtqueue layer — QEMU's `virt` machine has no
   ATA/PS2/VGA equivalents, so disk (virtio-blk), graphics (virtio-gpu or
   `ramfb`), and input (virtio-input) all need this shared groundwork

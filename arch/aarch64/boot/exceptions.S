@@ -1,8 +1,12 @@
 /* arch/aarch64/boot/exceptions.S
- * AArch64 exception vector table. Only "Current EL, SPx" IRQ (index
- * 5) has a real handler — this kernel runs entirely at EL1h, and
- * nothing raises FIQ/SError/EL0 exceptions yet (no userspace, no
- * FIQ-grouped interrupts). Every other entry halts rather than
+ * AArch64 exception vector table. Real handlers exist for:
+ *   - IRQ, current EL SPx (index 5)      — kernel-thread-sourced IRQ
+ *   - SVC, lower EL AArch64 (index 8)    — EL0 syscalls
+ *   - IRQ, lower EL AArch64 (index 9)    — timer preempting an EL0 process
+ * EL1 always runs SPSel=1 (EL1h), so SP_EL1 is the active stack no
+ * matter which of these fires — kernel_entry/kernel_exit need no
+ * per-source-EL variant. Every other entry (FIQ, SError, EL0
+ * synchronous faults other than SVC, AArch32) still halts rather than
  * silently running whatever garbage the fault landed on.
  */
 
@@ -81,8 +85,13 @@ vector_table:
 
     vector_stub                 /* fiq,   current EL, SPx */
     vector_stub                 /* serror,current EL, SPx */
-    vector_stub                 /* sync,  lower EL, aarch64 */
-    vector_stub                 /* irq,   lower EL, aarch64 */
+
+    b svc_common_handler        /* sync,  lower EL, aarch64 — EL0 syscalls */
+    .balign 0x80
+
+    b irq_common_handler        /* irq,   lower EL, aarch64 — timer preempting EL0 */
+    .balign 0x80
+
     vector_stub                 /* fiq,   lower EL, aarch64 */
     vector_stub                 /* serror,lower EL, aarch64 */
     vector_stub                 /* sync,  lower EL, aarch32 */
@@ -97,4 +106,10 @@ unhandled_exception:
 irq_common_handler:
     kernel_entry
     bl aarch64_irq_handler
+    kernel_exit
+
+svc_common_handler:
+    kernel_entry
+    mov x0, sp
+    bl aarch64_svc_handler
     kernel_exit
