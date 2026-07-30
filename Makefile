@@ -65,6 +65,7 @@ else ifeq ($(ARCH), aarch64)
                -no-shutdown                        \
                -display none                       \
                -global virtio-mmio.force-legacy=false \
+               -device ramfb                       \
                -kernel $(KERNEL)                   \
                -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 \
                -device virtio-blk-device,drive=hd0

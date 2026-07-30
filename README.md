@@ -21,20 +21,24 @@ small VFS. All of it runs together, verified working concurrently.
 
 **aarch64 now boots with the MMU on, preemptively schedules kernel
 threads, isolates address spaces, runs real EL0 userspace executables
-with syscalls, and reads a file off a virtio-blk disk through the same
-VFS x86_64 uses** — feature-equivalent to x86_64 short of graphics and
-input. It boots straight from QEMU's ELF loader (no bootloader stage),
-drops from whatever EL it resets into down to EL1, enables the MMU with
-a static identity map before anything else runs, brings up a PL011
-console and memory (PMM + heap), then a GICv2 + ARM Generic Timer drive
-the same arch-independent round-robin scheduler x86_64 uses. A dynamic
-per-address-space VMM sits on top of the boot identity map (proven by the
-same isolation self-test x86_64 uses), an embedded ELF64 test binary runs
-at EL0 and exits cleanly via `svc` syscalls, and a generic virtio-mmio +
-virtqueue driver backs a read-only virtio-blk device — verified over
-serial end to end: `HELLO FROM EL0` / `USERLAND: EXIT 0` /
-`FILE READ FROM DISK VIA VFS`. No graphics or input yet — see "What's
-implemented" below for the exact line.
+with syscalls, reads a file off a virtio-blk disk, and drives the same
+GUI compositor x86_64 uses** — feature-equivalent to x86_64 short of
+keyboard/mouse input. It boots straight from QEMU's ELF loader (no
+bootloader stage), drops from whatever EL it resets into down to EL1,
+enables the MMU with a static identity map before anything else runs,
+brings up a PL011 console and memory (PMM + heap), then a GICv2 + ARM
+Generic Timer drive the same arch-independent round-robin scheduler
+x86_64 uses. A dynamic per-address-space VMM sits on top of the boot
+identity map (proven by the same isolation self-test x86_64 uses), an
+embedded ELF64 test binary runs at EL0 and exits cleanly via `svc`
+syscalls, a generic virtio-mmio + virtqueue driver backs a read-only
+virtio-blk device, and a `ramfb` framebuffer (configured over QEMU's
+fw_cfg DMA interface) renders `gui/gui.c`'s draggable windows and cursor
+— the exact same compositor output x86_64 produces, unmodified — proven
+by a `screendump` capture, not just a status line. Verified over serial
+end to end: `HELLO FROM EL0` / `USERLAND: EXIT 0` /
+`FILE READ FROM DISK VIA VFS` / `FB: OK`. Only keyboard/mouse input is
+missing now — see "What's implemented" below for the exact line.
 
 `arm32` and MCU targets (`rp2040`, `stm32f4`) still exist as empty
 scaffolding in `arch/` and in the Makefile, with no code yet.
@@ -115,6 +119,11 @@ silently.
    x86_64 uses runs unmodified — it just works once
    `arch_disk_available()`/`arch_disk_read_sector()` are backed by
    virtio-blk instead of ATA.
+8. `arch_late_init()` also configures a `ramfb` framebuffer over fw_cfg,
+   then `kernel_main()`'s `gui_init()` call and its idle-loop
+   `gui_update()` — both already unconditional, arch-independent code —
+   start actually drawing the moment `arch_gfx_available()` turns true,
+   the same way `fs/vfs.c` "just worked" once virtio-blk landed.
 
 ### What's implemented (aarch64)
 
@@ -131,9 +140,11 @@ silently.
 | Scheduler     | `kernel/sched.c`, `arch/aarch64/sched.c`, `boot/context_switch.S` | Same round-robin policy as x86_64; AArch64 context switch saves/restores x19–x30 per AAPCS64 |
 | Userspace     | `arch/aarch64/process.c`, `syscall.c`, `boot/usermode.S`          | Real ELF64 loader, EL0 execution, `svc` syscalls (x8=number, x0-x2=args, x0=return), isolated address space per process |
 | Disk + FS     | `arch/aarch64/drivers/virtio.c`, `virtio_blk.c`, `fs/vfs.c`       | Generic virtio-mmio + virtqueue transport (probed by device ID across all 32 mmio slots, not a fixed slot assumption), synchronous virtio-blk on top, same read-only VFS x86_64 uses |
+| Graphics      | `arch/aarch64/drivers/framebuffer.c`, `font8x8.c`                 | `ramfb` linear framebuffer configured over QEMU's fw_cfg DMA interface; `font8x8.c` is an unmodified copy of x86_64's (pure bitmap data, no hardware dependency) |
+| GUI           | `gui/gui.c`                                                       | The exact same arch-independent compositor x86_64 uses — draggable windows, cursor — unmodified, running the moment `arch_gfx_available()` is real |
 
-Everything else in `arch.h` — graphics, keyboard/mouse — is stubbed to
-"not available" (`false`/`0`/no-op) rather than implemented.
+Everything else in `arch.h` — keyboard/mouse — is stubbed to "not
+available" (`false`/no-op) rather than implemented.
 
 ### Known limitations (honest, not hidden)
 
@@ -155,9 +166,11 @@ Everything else in `arch.h` — graphics, keyboard/mouse — is stubbed to
   driver → VFS chain works, not to read real-world disk images.
 - Everything in the table above is x86_64-only.
 - **aarch64 has boot, memory, interrupts, a preemptive scheduler, a
-  working VMM, EL0 userspace, and a disk, but no graphics and no
-  keyboard/mouse.** Same one-process-at-a-time and
-  no-syscall-pointer-validation caveats as x86_64 apply here too —
+  working VMM, EL0 userspace, a disk, and graphics, but no
+  keyboard/mouse.** The GUI renders but nothing can click or drag
+  anything yet — `arch_mouse_get_state()` always returns false and
+  `arch_keyboard_getchar()` always returns 0. Same one-process-at-a-time
+  and no-syscall-pointer-validation caveats as x86_64 apply here too —
   `process_run()` isn't threaded into `kernel/sched.c`'s ready queue, and
   EL0 pointers are dereferenced directly rather than copied/validated.
   virtio-blk is synchronous/polling like the x86_64 ATA driver — no
@@ -267,9 +280,13 @@ live from the demo disk file.
 
 `make ARCH=aarch64 run` boots straight into the kernel with no bootloader
 stage (QEMU's `-kernel` loads the ELF directly) and prints the boot banner
-over serial — with no graphics yet, there's nothing on the QEMU display
-window itself, so `-display none` is the default in `QFLAGS`; watch the
-terminal instead. `QFLAGS` also passes `-global virtio-mmio.force-legacy=false`:
+over serial. `-display none` is still the default in `QFLAGS` — a
+`ramfb` device is attached and does render the GUI, but with no
+keyboard/mouse input yet there's nothing to interact with, so there's
+no real reason to open a window; use QEMU's HMP monitor
+(`-monitor unix:/path,server,nowait`, then `screendump out.png`) if you
+want to see the framebuffer content, same as this project's own testing
+does. `QFLAGS` also passes `-global virtio-mmio.force-legacy=false`:
 QEMU's virtio-mmio devices default to the legacy (version 1) interface,
 and `arch/aarch64/drivers/virtio.c` only speaks the modern one.
 
@@ -285,14 +302,10 @@ x86_64:
 
 aarch64 (the actual next frontier — proving `arch.h` on hardware nothing
 like x86_64):
-- Graphics — likely `ramfb` (a simple linear framebuffer over QEMU's
-  fw_cfg DMA interface) rather than full virtio-gpu, to keep the same
-  "pixel/line/rect/text on a raw buffer" model x86_64's framebuffer
-  driver already has, instead of a 2D command queue.
 - virtio-input for keyboard/mouse, on top of the virtio-mmio transport
-  virtio-blk already established — then `gui/gui.c` should work
-  unmodified once `arch_gfx_available()`/`arch_mouse_get_state()` are
-  real, the same way `fs/vfs.c` just worked once virtio-blk landed.
+  virtio-blk already established — then `gui/gui.c` should become
+  interactive with no further changes, the same way it started
+  rendering unmodified once `ramfb` landed.
 - A real device-tree parser, so RAM size comes from what QEMU actually
   reports instead of a hardcoded constant matched to the Makefile's `-m`
   flag.

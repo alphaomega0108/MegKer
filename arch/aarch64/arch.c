@@ -9,6 +9,7 @@
  */
 
 #include <arch/arch.h>
+#include <arch/aarch64/framebuffer.h>
 #include <arch/aarch64/gic.h>
 #include <arch/aarch64/mmu.h>
 #include <arch/aarch64/process.h>
@@ -122,8 +123,10 @@ void arch_late_init(void)
     }
 
     virtio_blk_init();
+    fb_init();
+    puts(fb_available() ? "FB: OK\n" : "FB: NOT AVAILABLE\n");
 
-    /* PL011 RX interrupt, graphics: future work — see README known
+    /* PL011 RX interrupt, input: future work — see README known
      * limitations. */
 }
 
@@ -142,13 +145,13 @@ bool arch_mouse_get_state(i32* x, i32* y, u8* buttons)
     return false;
 }
 
-bool arch_gfx_available(void) { return false; }
-u32  arch_gfx_width(void)     { return 0; }
-u32  arch_gfx_height(void)    { return 0; }
-void arch_gfx_put_pixel(u32 x, u32 y, u32 rgb)                      { UNUSED(x); UNUSED(y); UNUSED(rgb); }
-void arch_gfx_fill_rect(u32 x, u32 y, u32 w, u32 h, u32 rgb)        { UNUSED(x); UNUSED(y); UNUSED(w); UNUSED(h); UNUSED(rgb); }
-void arch_gfx_draw_line(i32 x0, i32 y0, i32 x1, i32 y1, u32 rgb)    { UNUSED(x0); UNUSED(y0); UNUSED(x1); UNUSED(y1); UNUSED(rgb); }
-void arch_gfx_draw_string(u32 x, u32 y, const char* s, u32 fg, u32 bg) { UNUSED(x); UNUSED(y); UNUSED(s); UNUSED(fg); UNUSED(bg); }
+bool arch_gfx_available(void) { return fb_available(); }
+u32  arch_gfx_width(void)     { return fb_width(); }
+u32  arch_gfx_height(void)    { return fb_height(); }
+void arch_gfx_put_pixel(u32 x, u32 y, u32 rgb)                      { fb_put_pixel(x, y, rgb); }
+void arch_gfx_fill_rect(u32 x, u32 y, u32 w, u32 h, u32 rgb)        { fb_fill_rect(x, y, w, h, rgb); }
+void arch_gfx_draw_line(i32 x0, i32 y0, i32 x1, i32 y1, u32 rgb)    { fb_draw_line(x0, y0, x1, y1, rgb); }
+void arch_gfx_draw_string(u32 x, u32 y, const char* s, u32 fg, u32 bg) { fb_draw_string(x, y, s, fg, bg); }
 
 void arch_interrupts_init(void)
 {
