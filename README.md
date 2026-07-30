@@ -19,10 +19,15 @@ schedules kernel threads, runs real ELF64 executables in ring 3 with
 syscalls and isolated address spaces, and reads files off a disk through a
 small VFS. All of it runs together, verified working concurrently.
 
-`aarch64`, `arm32`, and MCU targets (`rp2040`, `stm32f4`) exist as empty
-scaffolding in `arch/` and in the Makefile, but have no code yet — the
-entire span from 8051 to M4 that this project is named for is still
-represented by exactly one architecture so far.
+**aarch64 has just landed its first boot stage**, targeting QEMU's `virt`
+machine: it boots straight from QEMU's ELF loader (no bootloader stage),
+drops from whatever EL it resets into down to EL1, brings up a PL011
+console, and initializes memory (PMM + heap) — confirmed via serial output
+reading `MegKer` / `RAM: 1024 MB` / `Heap: OK`. No GIC, timer interrupt,
+graphics, or disk yet — see "What's implemented" below for the exact line.
+
+`arm32` and MCU targets (`rp2040`, `stm32f4`) still exist as empty
+scaffolding in `arch/` and in the Makefile, with no code yet.
 
 ### x86_64 boot sequence
 
@@ -63,6 +68,40 @@ Unhandled CPU exceptions (divide-by-zero, GPF, page fault, etc.) call
 `kernel_panic()` with the exception name and halt, rather than crashing
 silently.
 
+### aarch64 boot sequence
+
+1. QEMU's `-kernel` loader reads `kernel.elf` as a real ELF (not a Linux
+   `Image`) and places segments directly at their linked addresses — no
+   bootloader or firmware stage runs first — then jumps to `_start`
+   (`arch/aarch64/boot/boot.S`) with a device-tree blob pointer in `x0`.
+2. `_start` parks every core except CPU 0, reads `CurrentEL`, and drops
+   from EL3 or EL2 (whichever QEMU reset into) down to EL1 via a
+   `spsr`/`elr` + `eret` sequence — this kernel only targets EL1.
+3. Once at EL1, it sets up a boot stack, zeros the C `.bss` region, and
+   calls `kernel_main(0, dtb_ptr)` — aarch64 has no Multiboot-style magic,
+   so `boot_magic` is unused; `boot_info` carries the (currently unparsed)
+   DTB pointer instead.
+4. `kernel_main()` — the same arch-independent entry point x86_64 uses —
+   brings up the console and memory, then reaches its idle loop. Since
+   `arch_gfx_available()` is false on this arch, that loop just polls
+   `arch_keyboard_getchar()` (always 0 for now) instead of running the GUI.
+
+### What's implemented (aarch64)
+
+| Subsystem     | File(s)                                           | Notes |
+|---------------|----------------------------------------------------|-------|
+| Boot          | `arch/aarch64/boot/boot.S`, `linker.ld`             | EL3/EL2→EL1 drop, targets QEMU's `virt` machine |
+| Exceptions    | `arch/aarch64/boot/exceptions.S`                    | Minimal VBAR_EL1 vector table — every entry halts; no real handlers yet |
+| Console       | `arch/aarch64/drivers/uart.c`                       | PL011, polled, fixed MMIO base (`0x09000000`) |
+| Physical mem  | `mm/pmm.c`, `arch/aarch64/arch.c`                   | Same bitmap allocator as x86_64; RAM region is hardcoded, not parsed from the DTB |
+| Kernel heap   | `mm/heap.c`                                         | Identical arch-independent allocator — works unmodified since the MMU is off (physical == virtual) |
+
+Everything else in `arch.h` — timer, interrupts controller, graphics,
+keyboard/mouse, disk, scheduler context-switch — is stubbed to "not
+available" (`false`/`0`/no-op) rather than implemented. `arch_interrupts_enable()`
+is still safe to call: the vector table is real, it just halts on anything
+it receives, and nothing is currently wired up to raise an interrupt.
+
 ### Known limitations (honest, not hidden)
 
 - **One process at a time.** `process_run()` is synchronous — it isn't
@@ -81,8 +120,14 @@ silently.
 - **Filesystem is read-only, flat, and custom** — no subdirectories, no
   writes, not FAT/ext/anything-standard. It exists to prove the disk →
   driver → VFS chain works, not to read real-world disk images.
-- Everything above is x86_64-only; `aarch64`/`arm32`/MCU targets have no
-  code yet.
+- Everything in the table above is x86_64-only.
+- **aarch64 is boot + console + memory only.** No GIC (so no timer
+  interrupt, no scheduler tick, no preemption), no graphics, no
+  keyboard/mouse, no disk. The RAM size is hardcoded to match the
+  Makefile's `-m 1G` rather than parsed from the device tree QEMU hands
+  in — a real DTB parser is future work, same spirit as x86_64's
+  Multiboot2 memory-map walk.
+- `arm32`/MCU targets have no code yet.
 
 ## Architecture abstraction
 
@@ -108,20 +153,25 @@ arch_disk_available();  arch_disk_read_sector();
 
 Every architecture under `arch/<name>/` is expected to implement all of
 these (returning "not available" where a capability doesn't exist yet is
-fine — e.g. a keyboard-less board just always returns 0). Some deeper
-mechanisms (virtual memory layout, ring transitions, ELF loading, ATA) are
-still x86_64-specific modules rather than generic interfaces — they'll grow
-a generic `arch.h` surface once a second architecture actually needs one,
-same as graphics/mouse/threading did. Fixed-width types
-(`include/kernel/types.h`) are used everywhere instead of `int`/`long`,
-since their size isn't consistent across the target range.
+fine — e.g. a keyboard-less board just always returns 0). aarch64 is the
+proof this holds up: `kernel/kernel.c` is byte-for-byte the same file on
+both architectures, and it correctly skips the GUI/VFS paths on aarch64
+purely because `arch_gfx_available()`/`arch_disk_available()` return
+false — no `#ifdef ARCH_X86_64` anywhere in arch-independent code. Some
+deeper mechanisms (virtual memory layout, ring transitions, ELF loading,
+ATA) are still x86_64-specific modules rather than generic interfaces —
+they'll grow a generic `arch.h` surface once a second architecture
+actually needs one, same as graphics/mouse/threading did. Fixed-width
+types (`include/kernel/types.h`) are used everywhere instead of
+`int`/`long`, since their size isn't consistent across the target range.
 
 ## Project layout
 
 ```
 arch/                 Per-architecture code (boot, GDT/IDT/TSS, mm, drivers)
   x86_64/              Implemented — see table above
-  aarch64/, arm32/     Scaffolding only
+  aarch64/             Boot + console + memory — see table above
+  arm32/               Scaffolding only
   mcu/rp2040/          )
   mcu/stm32f4/         )  Scaffolding only
 include/               Public headers (kernel/, arch/, mm/, gui/, fs/)
@@ -143,8 +193,8 @@ tools/
 
 Requires, per target architecture:
 
-- A `<target>-elf-gcc` cross-compiler (e.g. `x86_64-elf-gcc`)
-- `nasm` (x86_64 only)
+- A `<target>-elf-gcc` cross-compiler (e.g. `x86_64-elf-gcc`, `aarch64-elf-gcc`)
+- `nasm` (x86_64 only — aarch64 assembles `.S` files with `aarch64-elf-gcc` itself)
 - `qemu-system-<arch>`
 - `python3` (x86_64 only — builds the disk image)
 - For bootable ISOs: a GRUB build that includes the **`i386-pc`** platform
@@ -155,32 +205,50 @@ Requires, per target architecture:
 Run `tools/check-toolchain.sh` to verify what's installed.
 
 ```sh
-make                 # build x86_64 kernel.elf (default ARCH=x86_64)
-make iso             # package it into a bootable ISO with GRUB2
-make run             # build + launch in QEMU (kernel, ISO, and disk image)
-make clean           # remove build/
-make all-archs       # build every arch (aarch64/arm32 will no-op until implemented)
+make                     # build x86_64 kernel.elf (default ARCH=x86_64)
+make iso                 # package it into a bootable ISO with GRUB2
+make run                 # build + launch in QEMU (kernel, ISO, and disk image)
+make ARCH=aarch64 run    # build + launch aarch64 in QEMU's `virt` machine
+make clean               # remove build/
+make all-archs           # build every arch (arm32 will no-op until implemented)
 ```
 
-`make run` boots in QEMU under `-machine pc` (i440fx — **not** q35: q35 has
-no legacy IDE controller at the classic ports by default, only AHCI/SATA,
-and the ATA driver needs it) with a second drive attached for the demo
-filesystem. You should see GRUB's menu, then the GUI come up with two
+`make run` (x86_64) boots in QEMU under `-machine pc` (i440fx — **not** q35:
+q35 has no legacy IDE controller at the classic ports by default, only
+AHCI/SATA, and the ATA driver needs it) with a second drive attached for the
+demo filesystem. You should see GRUB's menu, then the GUI come up with two
 draggable windows, a mouse cursor, a blinking corner indicator (proving the
 scheduler runs kernel threads concurrently), and — briefly, before the GUI's
 first redraw overwrites it — boot-time status text confirming the VMM
 self-test, the embedded ring-3 test program's exit code, and a line read
 live from the demo disk file.
 
+`make ARCH=aarch64 run` boots straight into the kernel with no bootloader
+stage (QEMU's `-kernel` loads the ELF directly) and prints the boot banner
+over serial — with no graphics yet, there's nothing on the QEMU display
+window itself, so `-display none` is the default in `QFLAGS`; watch the
+terminal instead.
+
 ## Known gaps / next steps
 
+x86_64:
 - Real multi-process scheduling (processes as schedulable entities in
   `kernel/sched.c`'s ready queue, not one synchronous launch at a time).
 - Syscall pointer validation / copy-from-user.
 - Huge-page splitting in the VMM.
 - A real filesystem (or at least subdirectories/writes on the current one),
   and a disk driver that isn't PIO-polling-only.
-- `aarch64`, `arm32`, and the MCU targets have no code — everything above is
-  x86_64-only so far. This is the project's actual next frontier: proving
-  the `arch.h` abstraction holds up on hardware nothing like x86_64, not
-  going further/deeper on x86_64 alone.
+
+aarch64 (the actual next frontier — proving `arch.h` on hardware nothing
+like x86_64):
+- GICv2/v3 driver + the generic timer interrupt, which unblocks the
+  scheduler tick (`arch_context_switch()`/`arch_thread_init_stack()` are
+  still stubs — the ring/context-switch mechanics work fine on x86_64 but
+  haven't been written for AArch64 registers/calling convention yet).
+- A real device-tree parser, so RAM size (and eventually a PL011 node,
+  virtio-blk, etc.) comes from what QEMU actually reports instead of a
+  hardcoded constant matched to the Makefile's `-m` flag.
+- PL011 RX (keyboard-equivalent input) and a graphics path — likely
+  virtio-gpu on the `virt` machine, which is a very different model from
+  x86_64's Multiboot2-negotiated linear framebuffer.
+- `arm32` and the MCU targets still have no code at all.

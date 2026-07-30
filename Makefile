@@ -33,18 +33,24 @@ ifeq ($(ARCH), x86_64)
 
 else ifeq ($(ARCH), aarch64)
     CC      := aarch64-elf-gcc
-    AS      := aarch64-elf-as
+    AS      := aarch64-elf-gcc
     LD      := aarch64-elf-ld
     QEMU    := qemu-system-aarch64
+    ASFLAGS := -x assembler-with-cpp -ffreestanding -c -Iinclude
     CFLAGS  := -ffreestanding -fno-builtin         \
+               -fno-stack-protector                \
                -nostdlib -nostdinc                 \
-               -mcpu=cortex-a53                   \
+               -mcpu=cortex-a53 -mgeneral-regs-only \
                -Wall -Wextra -std=c11              \
                -Iinclude
     LDFLAGS := -T arch/aarch64/linker.ld
-    QFLAGS  := -machine raspi3b                    \
+    QFLAGS  := -machine virt                       \
+               -cpu cortex-a53                     \
                -m 1G                               \
                -serial stdio                       \
+               -no-reboot                          \
+               -no-shutdown                        \
+               -display none                       \
                -kernel $(KERNEL)
 
 else ifeq ($(ARCH), arm32)
@@ -74,15 +80,16 @@ ISO     := $(BUILD)/megker.iso
 # Architecture specific .c files
 ARCH_C_SRCS := $(shell find arch/$(ARCH)/ -name "*.c" 2>/dev/null)
 
-# Architecture specific .asm files (x86_64 only)
-ARCH_ASM_SRCS := $(shell find arch/$(ARCH)/ -name "*.asm" 2>/dev/null)
+# Architecture specific assembly (.asm — NASM, x86_64; .S — GNU as w/ cpp, aarch64/arm32)
+ARCH_ASM_SRCS := $(shell find arch/$(ARCH)/ \( -name "*.asm" -o -name "*.S" \) 2>/dev/null)
 
 # Common kernel .c files
 KERN_SRCS := $(shell find kernel/ mm/ lib/ gui/ fs/ -name "*.c" 2>/dev/null)
 
 # All object files
 ARCH_C_OBJS   := $(patsubst %.c,   $(BUILD)/%.o, $(ARCH_C_SRCS))
-ARCH_ASM_OBJS := $(patsubst %.asm, $(BUILD)/%.o, $(ARCH_ASM_SRCS))
+ARCH_ASM_OBJS := $(patsubst %.asm, $(BUILD)/%.o, $(filter %.asm, $(ARCH_ASM_SRCS)))
+ARCH_ASM_OBJS += $(patsubst %.S,   $(BUILD)/%.o, $(filter %.S,   $(ARCH_ASM_SRCS)))
 KERN_OBJS     := $(patsubst %.c,   $(BUILD)/%.o, $(KERN_SRCS))
 
 # Userland test program (x86_64 only) — a real static ELF64 binary,
@@ -121,8 +128,14 @@ $(BUILD)/%.o: %.c
 	@echo "  CC  $<"
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# ── Assemble .asm files (NASM) ───────────────────────────
+# ── Assemble .asm files (NASM, x86_64) ───────────────────
 $(BUILD)/%.o: %.asm
+	@mkdir -p $(dir $@)
+	@echo "  AS  $<"
+	$(AS) $(ASFLAGS) $< -o $@
+
+# ── Assemble .S files (GNU as w/ cpp, aarch64/arm32) ─────
+$(BUILD)/%.o: %.S
 	@mkdir -p $(dir $@)
 	@echo "  AS  $<"
 	$(AS) $(ASFLAGS) $< -o $@
@@ -169,6 +182,7 @@ iso: $(KERNEL)
 	@echo "  ✓ ISO created: $(ISO)"
 
 # ── Run in QEMU ─────────────────────────────────────────
+ifeq ($(ARCH), x86_64)
 # Machine type is `pc` (i440fx), not q35: q35 has no legacy IDE
 # controller at the classic ports by default (AHCI/SATA only), which
 # the ATA PIO driver (arch/x86_64/drivers/ata.c) needs for the disk.
@@ -183,6 +197,13 @@ run: iso $(DISK_IMG)
 		-drive file=$(DISK_IMG),format=raw,if=ide \
 		-cdrom $(BUILD)/megker.iso \
 		-boot d
+else
+# Other arches boot the ELF directly via QEMU's -kernel (no
+# bootloader/ISO stage) — see QFLAGS above.
+run: $(KERNEL)
+	@echo "  Launching QEMU..."
+	$(QEMU) $(QFLAGS)
+endif
 
 # ── Build all architectures ─────────────────────────────
 all-archs:
