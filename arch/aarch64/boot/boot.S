@@ -40,6 +40,13 @@ from_el3:
 from_el2:
     mov x1, #(1 << 31)           /* HCR_EL2.RW — EL1 runs in AArch64 */
     msr hcr_el2, x1
+
+    mov x1, #3                   /* CNTHCTL_EL2: EL1PCTEN|EL1PCEN — don't
+                                   * trap EL1's access to the physical
+                                   * timer/counter to a nonexistent EL2 */
+    msr cnthctl_el2, x1
+    msr cntvoff_el2, xzr
+
     mov x1, #0x3c5                /* SPSR: EL1h, all exceptions masked */
     msr spsr_el2, x1
     adr x1, el1_entry

@@ -3,12 +3,14 @@
  * QEMU's `virt` machine. kernel_main() calls these — never touches
  * hardware directly.
  *
- * This is a first bring-up: console + memory only. No GIC, no timer
- * interrupt, no graphics, no disk, no scheduler context switch yet —
- * every such stub is called out below rather than hidden.
+ * Boot/console/memory/interrupts/timer/scheduler are real. No
+ * graphics, no input, no disk yet — every such stub is called out
+ * below rather than hidden.
  */
 
 #include <arch/arch.h>
+#include <arch/aarch64/gic.h>
+#include <arch/aarch64/timer.h>
 #include <arch/aarch64/uart.h>
 #include <kernel/kernel.h>
 #include <kernel/types.h>
@@ -36,8 +38,8 @@ void arch_early_init(void)
 
 void arch_late_init(void)
 {
-    /* GIC, PL011 RX interrupt, generic timer interrupt, PCI/virtio
-     * disk: all future work — see README known limitations. */
+    /* PL011 RX interrupt, graphics, disk: all future work — see
+     * README known limitations. */
 }
 
 void arch_console_init(void)   { }
@@ -65,11 +67,8 @@ void arch_gfx_draw_string(u32 x, u32 y, const char* s, u32 fg, u32 bg) { UNUSED(
 
 void arch_interrupts_init(void)
 {
-    /* No GIC set up yet, so nothing actually routes to the CPU — but
-     * kernel_main() unmasks DAIF unconditionally right after this
-     * call, so VBAR_EL1 must point at real handlers first rather than
-     * its EL1 reset value of 0. */
     __asm__ volatile ("msr vbar_el1, %0" :: "r" (vector_table));
+    gic_init();
 }
 
 void arch_interrupts_enable(void)
@@ -112,24 +111,17 @@ void arch_cpu_relax(void)
 
 void arch_timer_init(u32 hz)
 {
-    UNUSED(hz);   /* generic timer + GIC wiring: future work */
+    generic_timer_init(hz);
 }
 
 u64 arch_timer_ticks(void)
 {
-    return 0;   /* no timer interrupt driving this yet */
+    return generic_timer_ticks();
 }
 
-void* arch_thread_init_stack(void* stack_top, void (*entry)(void*), void* arg)
-{
-    UNUSED(stack_top); UNUSED(entry); UNUSED(arg);
-    return NULL;   /* no context-switch mechanics on this arch yet */
-}
-
-void arch_context_switch(void** old_sp, void* new_sp)
-{
-    UNUSED(old_sp); UNUSED(new_sp);
-}
+/* arch_thread_init_stack() and arch_context_switch() are implemented
+ * in sched.c / boot/context_switch.S — real context-switch mechanics
+ * now that the timer IRQ drives sched_tick(). */
 
 bool arch_disk_available(void) { return false; }
 bool arch_disk_read_sector(u32 lba, u8* buf) { UNUSED(lba); UNUSED(buf); return false; }

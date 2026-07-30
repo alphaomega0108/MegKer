@@ -111,7 +111,7 @@ endif
 ALL_OBJS := $(ARCH_ASM_OBJS) $(ARCH_C_OBJS) $(KERN_OBJS) $(USERLAND_EMBED)
 
 # ── Targets ─────────────────────────────────────────────
-.PHONY: all run iso clean all-archs help
+.PHONY: all run iso clean clean-all all-archs help
 
 all: $(KERNEL)
 	@echo ""
@@ -219,8 +219,12 @@ all-archs:
 
 # ── Clean ───────────────────────────────────────────────
 clean:
+	@rm -rf $(BUILD)
+	@echo "  ✓ Cleaned $(BUILD)"
+
+clean-all:
 	@rm -rf build/
-	@echo "  ✓ Cleaned"
+	@echo "  ✓ Cleaned all architectures"
 
 # ── Help ────────────────────────────────────────────────
 help:
@@ -233,5 +237,6 @@ help:
 	@echo "  make run               build + run in QEMU"
 	@echo "  make iso               create bootable ISO"
 	@echo "  make all-archs         build all targets"
-	@echo "  make clean             remove build output"
+	@echo "  make clean             remove build output for the current ARCH"
+	@echo "  make clean-all         remove build output for every ARCH"
 	@echo ""

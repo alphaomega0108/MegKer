@@ -19,12 +19,14 @@ schedules kernel threads, runs real ELF64 executables in ring 3 with
 syscalls and isolated address spaces, and reads files off a disk through a
 small VFS. All of it runs together, verified working concurrently.
 
-**aarch64 has just landed its first boot stage**, targeting QEMU's `virt`
-machine: it boots straight from QEMU's ELF loader (no bootloader stage),
-drops from whatever EL it resets into down to EL1, brings up a PL011
-console, and initializes memory (PMM + heap) — confirmed via serial output
-reading `MegKer` / `RAM: 1024 MB` / `Heap: OK`. No GIC, timer interrupt,
-graphics, or disk yet — see "What's implemented" below for the exact line.
+**aarch64 now boots, brings up memory, and preemptively schedules kernel
+threads**, targeting QEMU's `virt` machine: it boots straight from QEMU's
+ELF loader (no bootloader stage), drops from whatever EL it resets into
+down to EL1, brings up a PL011 console and memory (PMM + heap), then a
+GICv2 + ARM Generic Timer drive the same arch-independent round-robin
+scheduler x86_64 uses — verified by a second kernel thread actually
+interleaving with the boot thread over serial output. No graphics, input,
+or disk yet — see "What's implemented" below for the exact line.
 
 `arm32` and MCU targets (`rp2040`, `stm32f4`) still exist as empty
 scaffolding in `arch/` and in the Makefile, with no code yet.
@@ -82,25 +84,28 @@ silently.
    so `boot_magic` is unused; `boot_info` carries the (currently unparsed)
    DTB pointer instead.
 4. `kernel_main()` — the same arch-independent entry point x86_64 uses —
-   brings up the console and memory, then reaches its idle loop. Since
-   `arch_gfx_available()` is false on this arch, that loop just polls
-   `arch_keyboard_getchar()` (always 0 for now) instead of running the GUI.
+   brings up console, memory, interrupts, and the timer, then
+   `sched_init()`/`thread_create()` spin up a second kernel thread exactly
+   as they do on x86_64. Since `arch_gfx_available()` is false on this arch,
+   the idle loop polls `arch_keyboard_getchar()` (always 0 for now) instead
+   of running the GUI, but the timer-driven scheduler tick keeps firing
+   underneath it regardless.
 
 ### What's implemented (aarch64)
 
-| Subsystem     | File(s)                                           | Notes |
-|---------------|----------------------------------------------------|-------|
-| Boot          | `arch/aarch64/boot/boot.S`, `linker.ld`             | EL3/EL2→EL1 drop, targets QEMU's `virt` machine |
-| Exceptions    | `arch/aarch64/boot/exceptions.S`                    | Minimal VBAR_EL1 vector table — every entry halts; no real handlers yet |
-| Console       | `arch/aarch64/drivers/uart.c`                       | PL011, polled, fixed MMIO base (`0x09000000`) |
-| Physical mem  | `mm/pmm.c`, `arch/aarch64/arch.c`                   | Same bitmap allocator as x86_64; RAM region is hardcoded, not parsed from the DTB |
-| Kernel heap   | `mm/heap.c`                                         | Identical arch-independent allocator — works unmodified since the MMU is off (physical == virtual) |
+| Subsystem     | File(s)                                                          | Notes |
+|---------------|-------------------------------------------------------------------|-------|
+| Boot          | `arch/aarch64/boot/boot.S`, `linker.ld`                           | EL3/EL2→EL1 drop, targets QEMU's `virt` machine |
+| Exceptions    | `arch/aarch64/boot/exceptions.S`                                  | Full VBAR_EL1 vector table; only IRQ (current EL, SPx) has a real handler — everything else still halts |
+| Interrupts    | `arch/aarch64/drivers/gic.c`, `irq.c`                             | GICv2, Distributor + CPU interface; `GICC_CTLR.AckCtl` needed since EL1 reads as a Secure access with no EL3 firmware present (see commit for the debugging story) |
+| Timer         | `arch/aarch64/drivers/timer.c`                                    | ARM Generic Timer, non-secure EL1 physical timer, PPI 30; drives the scheduler tick |
+| Console       | `arch/aarch64/drivers/uart.c`                                     | PL011, polled, fixed MMIO base (`0x09000000`) |
+| Physical mem  | `mm/pmm.c`, `arch/aarch64/arch.c`                                 | Same bitmap allocator as x86_64; RAM region is hardcoded, not parsed from the DTB |
+| Kernel heap   | `mm/heap.c`                                                       | Identical arch-independent allocator — works unmodified since the MMU is off (physical == virtual) |
+| Scheduler     | `kernel/sched.c`, `arch/aarch64/sched.c`, `boot/context_switch.S` | Same round-robin policy as x86_64; AArch64 context switch saves/restores x19–x30 per AAPCS64 |
 
-Everything else in `arch.h` — timer, interrupts controller, graphics,
-keyboard/mouse, disk, scheduler context-switch — is stubbed to "not
-available" (`false`/`0`/no-op) rather than implemented. `arch_interrupts_enable()`
-is still safe to call: the vector table is real, it just halts on anything
-it receives, and nothing is currently wired up to raise an interrupt.
+Everything else in `arch.h` — graphics, keyboard/mouse, disk — is stubbed
+to "not available" (`false`/`0`/no-op) rather than implemented.
 
 ### Known limitations (honest, not hidden)
 
@@ -121,12 +126,14 @@ it receives, and nothing is currently wired up to raise an interrupt.
   writes, not FAT/ext/anything-standard. It exists to prove the disk →
   driver → VFS chain works, not to read real-world disk images.
 - Everything in the table above is x86_64-only.
-- **aarch64 is boot + console + memory only.** No GIC (so no timer
-  interrupt, no scheduler tick, no preemption), no graphics, no
-  keyboard/mouse, no disk. The RAM size is hardcoded to match the
-  Makefile's `-m 1G` rather than parsed from the device tree QEMU hands
-  in — a real DTB parser is future work, same spirit as x86_64's
-  Multiboot2 memory-map walk.
+- **aarch64 has boot, memory, interrupts, and a preemptive scheduler, but
+  no MMU/VMM, no userspace, no graphics, no keyboard/mouse, no disk.**
+  The MMU is never enabled — kernel code runs with physical addressing
+  throughout, so there's no address-space isolation yet (the x86_64
+  equivalent of running everything the VMM stage added, minus the VMM).
+  The RAM size is hardcoded to match the Makefile's `-m 1G` rather than
+  parsed from the device tree QEMU hands in — a real DTB parser is future
+  work, same spirit as x86_64's Multiboot2 memory-map walk.
 - `arm32`/MCU targets have no code yet.
 
 ## Architecture abstraction
@@ -241,14 +248,18 @@ x86_64:
 
 aarch64 (the actual next frontier — proving `arch.h` on hardware nothing
 like x86_64):
-- GICv2/v3 driver + the generic timer interrupt, which unblocks the
-  scheduler tick (`arch_context_switch()`/`arch_thread_init_stack()` are
-  still stubs — the ring/context-switch mechanics work fine on x86_64 but
-  haven't been written for AArch64 registers/calling convention yet).
-- A real device-tree parser, so RAM size (and eventually a PL011 node,
-  virtio-blk, etc.) comes from what QEMU actually reports instead of a
-  hardcoded constant matched to the Makefile's `-m` flag.
-- PL011 RX (keyboard-equivalent input) and a graphics path — likely
-  virtio-gpu on the `virt` machine, which is a very different model from
-  x86_64's Multiboot2-negotiated linear framebuffer.
+- AArch64 MMU/VMM: TTBR0/1_EL1, a 4-level 4KB-granule page table walker,
+  and per-address-space isolation — x86_64's `vmm_selftest()` pattern,
+  translated to AArch64's page table format.
+- EL0 userspace: SVC syscalls, dropping to EL0 via `eret` (the same
+  mechanism `boot.S` already uses for EL-drops, aimed one level lower),
+  and reusing the existing ELF64 loader logic.
+- A virtio-mmio transport + virtqueue layer — QEMU's `virt` machine has no
+  ATA/PS2/VGA equivalents, so disk (virtio-blk), graphics (virtio-gpu or
+  `ramfb`), and input (virtio-input) all need this shared groundwork
+  first, unlike x86_64 where each device had its own simple port-I/O or
+  MMIO interface.
+- A real device-tree parser, so RAM size comes from what QEMU actually
+  reports instead of a hardcoded constant matched to the Makefile's `-m`
+  flag.
 - `arm32` and the MCU targets still have no code at all.
