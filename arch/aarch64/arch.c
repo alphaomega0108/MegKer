@@ -14,6 +14,7 @@
 #include <arch/aarch64/process.h>
 #include <arch/aarch64/timer.h>
 #include <arch/aarch64/uart.h>
+#include <arch/aarch64/virtio_blk.h>
 #include <arch/aarch64/vmm.h>
 #include <kernel/kernel.h>
 #include <kernel/types.h>
@@ -120,8 +121,10 @@ void arch_late_init(void)
         puts("\n");
     }
 
-    /* PL011 RX interrupt, graphics, disk: all future work — see
-     * README known limitations. */
+    virtio_blk_init();
+
+    /* PL011 RX interrupt, graphics: future work — see README known
+     * limitations. */
 }
 
 void arch_console_init(void)   { }
@@ -206,5 +209,5 @@ u64 arch_timer_ticks(void)
  * in sched.c / boot/context_switch.S — real context-switch mechanics
  * now that the timer IRQ drives sched_tick(). */
 
-bool arch_disk_available(void) { return false; }
-bool arch_disk_read_sector(u32 lba, u8* buf) { UNUSED(lba); UNUSED(buf); return false; }
+bool arch_disk_available(void) { return virtio_blk_available(); }
+bool arch_disk_read_sector(u32 lba, u8* buf) { return virtio_blk_read_sector(lba, buf); }

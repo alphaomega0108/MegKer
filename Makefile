@@ -12,12 +12,13 @@ ARCH ?= x86_64
 
 # ── Output paths ────────────────────────────────────────
 # Defined before the toolchain block below: QFLAGS (per-arch) expands
-# $(KERNEL)/$(ISO) with `:=` (immediate expansion), so they must
-# already exist at that point or QEMU gets invoked with an empty
-# -kernel/-drive argument.
-BUILD   := build/$(ARCH)
-KERNEL  := $(BUILD)/kernel.elf
-ISO     := $(BUILD)/megker.iso
+# $(KERNEL)/$(ISO)/$(DISK_IMG) with `:=` (immediate expansion), so
+# they must already exist at that point or QEMU gets invoked with an
+# empty -kernel/-drive argument.
+BUILD    := build/$(ARCH)
+KERNEL   := $(BUILD)/kernel.elf
+ISO      := $(BUILD)/megker.iso
+DISK_IMG := $(BUILD)/disk.img
 
 # ── Toolchain ───────────────────────────────────────────
 ifeq ($(ARCH), x86_64)
@@ -53,6 +54,9 @@ else ifeq ($(ARCH), aarch64)
                -Wall -Wextra -std=c11              \
                -Iinclude
     LDFLAGS := -T arch/aarch64/linker.ld
+    # force-legacy=false: QEMU's virtio-mmio devices default to the
+    # legacy (version 1) interface; arch/aarch64/drivers/virtio.c only
+    # speaks the modern (version 2) one.
     QFLAGS  := -machine virt                       \
                -cpu cortex-a53                     \
                -m 1G                               \
@@ -60,7 +64,10 @@ else ifeq ($(ARCH), aarch64)
                -no-reboot                          \
                -no-shutdown                        \
                -display none                       \
-               -kernel $(KERNEL)
+               -global virtio-mmio.force-legacy=false \
+               -kernel $(KERNEL)                   \
+               -drive file=$(DISK_IMG),if=none,format=raw,id=hd0 \
+               -device virtio-blk-device,drive=hd0
 
 else ifeq ($(ARCH), arm32)
     CC      := arm-none-eabi-gcc
@@ -105,15 +112,12 @@ ifeq ($(ARCH), x86_64)
     USERLAND_SRC   := userland/hello.c
     USERLAND_ELF   := $(BUILD)/userland/hello.elf
     USERLAND_EMBED := $(BUILD)/userland/hello_embed.o
-    DISK_IMG       := $(BUILD)/disk.img
 else ifeq ($(ARCH), aarch64)
     USERLAND_SRC   := userland/hello_aarch64.c
     USERLAND_ELF   := $(BUILD)/userland/hello.elf
     USERLAND_EMBED := $(BUILD)/userland/hello_embed.o
-    DISK_IMG       :=
 else
     USERLAND_EMBED :=
-    DISK_IMG       :=
 endif
 
 ALL_OBJS := $(ARCH_ASM_OBJS) $(ARCH_C_OBJS) $(KERN_OBJS) $(USERLAND_EMBED)
@@ -230,7 +234,7 @@ run: iso $(DISK_IMG)
 else
 # Other arches boot the ELF directly via QEMU's -kernel (no
 # bootloader/ISO stage) — see QFLAGS above.
-run: $(KERNEL)
+run: $(KERNEL) $(DISK_IMG)
 	@echo "  Launching QEMU..."
 	$(QEMU) $(QFLAGS)
 endif
