@@ -10,6 +10,15 @@
 
 ARCH ?= x86_64
 
+# ── Output paths ────────────────────────────────────────
+# Defined before the toolchain block below: QFLAGS (per-arch) expands
+# $(KERNEL)/$(ISO) with `:=` (immediate expansion), so they must
+# already exist at that point or QEMU gets invoked with an empty
+# -kernel/-drive argument.
+BUILD   := build/$(ARCH)
+KERNEL  := $(BUILD)/kernel.elf
+ISO     := $(BUILD)/megker.iso
+
 # ── Toolchain ───────────────────────────────────────────
 ifeq ($(ARCH), x86_64)
     CC      := x86_64-elf-gcc
@@ -69,11 +78,6 @@ else ifeq ($(ARCH), arm32)
                -serial stdio                       \
                -kernel $(KERNEL)
 endif
-
-# ── Output paths ────────────────────────────────────────
-BUILD   := build/$(ARCH)
-KERNEL  := $(BUILD)/kernel.elf
-ISO     := $(BUILD)/megker.iso
 
 # ── Source files ────────────────────────────────────────
 
